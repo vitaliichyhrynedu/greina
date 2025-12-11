@@ -24,6 +24,7 @@ pub struct Node {
 }
 
 impl Node {
+    /// Constructs a [Node] of the given filetype.
     pub fn new(filetype: FileType) -> Self {
         Self {
             filetype,
@@ -31,8 +32,14 @@ impl Node {
         }
     }
 
+    /// Returns the filetype of the node.
     pub fn filetype(&self) -> FileType {
         self.filetype
+    }
+
+    /// Returns the extents of the node as a slice.
+    pub fn extents(&self) -> &[Extent] {
+        &self.extents
     }
 
     /// Resolves the logical block index into a physical block index.
@@ -118,6 +125,11 @@ impl Extent {
     /// Returns the number of blocks in this extent.
     pub fn block_count(&self) -> usize {
         self.end - self.start
+    }
+
+    /// Represesnts itself as a (start, end) span.
+    pub fn span(&self) -> (usize, usize) {
+        (self.start, self.end)
     }
 }
 

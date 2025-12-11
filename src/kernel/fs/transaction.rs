@@ -238,6 +238,63 @@ impl<'a> Transaction<'a> {
         Ok(node_index)
     }
 
+    /// Creates a hard link to the file with a given name.
+    pub fn link_file(
+        &mut self,
+        parent_index: usize,
+        node_index: usize,
+        name: &str,
+    ) -> Result<(), Error> {
+        let name = Name::new(name).map_err(|e| Error::Dir(e))?;
+
+        let mut node = self.read_node(node_index)?;
+        if node.filetype() != FileType::File {
+            return Err(Error::FileTypeNotLinkable);
+        }
+        node.link_count += 1;
+        self.write_node(node_index, node)?;
+
+        let mut dir = self.read_directory(parent_index)?;
+        let entry = DirectoryEntry::new(node_index, node.filetype(), name);
+        dir.add_entry(entry);
+        self.write_directory(parent_index, &dir)?;
+
+        Ok(())
+    }
+
+    /// Removes a hard link to the file with a given name.
+    pub fn unlink_file(&mut self, parent_index: usize, name: &str) -> Result<(), Error> {
+        let name = Name::new(name).map_err(|e| Error::Dir(e))?;
+
+        let mut dir = self.read_directory(parent_index)?;
+        let entry = dir.get_entry(name).ok_or(Error::FileNotFound)?;
+        if entry.filetype() != FileType::File {
+            return Err(Error::FileTypeNotLinkable);
+        }
+        let node_index = dir.remove_entry(name).map_err(|e| Error::Dir(e))?;
+        self.write_directory(parent_index, &dir)?;
+
+        let mut node = self.read_node(node_index)?;
+        node.link_count -= 1;
+        if node.link_count == 0 {
+            // Deallocate the file
+            for extent in node.extents() {
+                self.fs
+                    .block_map
+                    .free(extent.span())
+                    .map_err(|e| Error::Alloc(e))?;
+            }
+            self.fs
+                .node_map
+                .free((node_index, node_index + 1))
+                .map_err(|e| Error::Alloc(e))?;
+            node = Node::default();
+        }
+        self.write_node(node_index, node)?;
+
+        Ok(())
+    }
+
     /// Reads the physical block.
     pub fn read_block(&self, block_index: usize) -> Result<Block, Error> {
         // Check cached changes
@@ -287,4 +344,6 @@ pub enum Error {
     Alloc(alloc_map::Error),
     Dir(directory::Error),
     Node(node::Error),
+    FileNotFound,
+    FileTypeNotLinkable,
 }

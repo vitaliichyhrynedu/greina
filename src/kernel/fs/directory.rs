@@ -39,11 +39,12 @@ impl Directory {
         }
     }
 
-    /// Removes the entry from the directory.
-    pub fn remove_entry(&mut self, name: Name) -> Result<(), Error> {
+    /// Removes the entry from the directory, returning its node index.
+    pub fn remove_entry(&mut self, name: Name) -> Result<usize, Error> {
         let entry = self.get_mut_entry(name).ok_or(Error::EntryNotFound)?;
+        let node_index = entry.index;
         entry.index = 0;
-        Ok(())
+        Ok(node_index)
     }
 
     /// Returns a view of the directory as a slice of [DirectoryEntry].
