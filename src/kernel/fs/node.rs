@@ -21,7 +21,7 @@ pub struct Node {
     pub extents: [Extent; MAX_EXTENTS],
 }
 
-/// Represents a contigous span of blocks.
+/// Represents a contiguous span of blocks.
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 #[derive(FromBytes, IntoBytes, Immutable)]
