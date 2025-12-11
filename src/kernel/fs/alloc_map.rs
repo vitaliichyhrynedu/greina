@@ -13,7 +13,7 @@ impl AllocMap {
         }
     }
 
-    /// Tries to find a contigous span of free objects of `count` length, using the first-fit algorithm.
+    /// Tries to find a contiguous span of free objects of `count` length, using the first-fit algorithm.
     /// On success, returns a (start, end) tuple, representing an exclusive range of indices.
     fn find_free(&self, count: usize) -> Option<(usize, usize)> {
         if count == 0 {
@@ -32,7 +32,7 @@ impl AllocMap {
         None
     }
 
-    /// Tries to allocate a contigious span of objects of `count` length.
+    /// Tries to allocate a contiguous span of objects of `count` length.
     /// On success, returns a (start, end) tuple, representing an exclusive range of indices.
     pub fn allocate(&mut self, count: usize) -> Result<(usize, usize), Error> {
         let span = self.find_free(count).ok_or(Error::OutOfSpace)?;
@@ -42,23 +42,47 @@ impl AllocMap {
         Ok(span)
     }
 
+    /// Tries to allocate the object at given index.
+    pub fn allocate_at(&mut self, index: usize) -> Result<(), Error> {
+        let flag = self.flags.get_mut(index).ok_or(Error::IndexOutOfBounds)?;
+        if *flag == AllocFlag::Used {
+            return Err(Error::ObjectOccupied);
+        }
+        *flag = AllocFlag::Used;
+        Ok(())
+    }
+
+    /// Tries to allocate the specified span of objects.
+    ///
+    /// # Panics
+    /// Panics if:
+    /// - `span` is not a valid span
+    pub fn allocate_span(&mut self, span: (usize, usize)) -> Result<(), Error> {
+        assert!(span.0 < span.1);
+        let span = self
+            .flags
+            .get_mut(span.0..span.1)
+            .ok_or(Error::IndexOutOfBounds)?;
+        if span.iter().any(|&f| f == AllocFlag::Used) {
+            return Err(Error::ObjectOccupied);
+        }
+        span.fill(AllocFlag::Used);
+        Ok(())
+    }
+
     /// Marks the specified span of objects as free.
     ///
     /// # Panics
     /// Panics if:
     /// - `span` is not a valid span
-    /// - `span` is out of bounds
-    pub fn free(&mut self, span: (usize, usize)) {
+    pub fn free(&mut self, span: (usize, usize)) -> Result<(), Error> {
         assert!(span.0 < span.1);
-        assert!(
-            span.1 <= self.flags.len(),
-            "Span end {} exceeds map length {}",
-            span.1,
-            self.flags.len()
-        );
-        for flag in &mut self.flags[span.0..span.1] {
-            *flag = AllocFlag::Free;
-        }
+        let span = self
+            .flags
+            .get_mut(span.0..span.1)
+            .ok_or(Error::IndexOutOfBounds)?;
+        span.fill(AllocFlag::Free);
+        Ok(())
     }
 
     /// Returns a view of the allocation map as a slice of [AllocFlag].
@@ -86,5 +110,7 @@ pub enum AllocFlag {
 
 /// [AllocMap]-related errors.
 pub enum Error {
+    IndexOutOfBounds,
+    ObjectOccupied,
     OutOfSpace,
 }
