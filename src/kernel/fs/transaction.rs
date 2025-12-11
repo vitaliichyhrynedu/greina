@@ -8,24 +8,24 @@ use crate::{
         block::{BLOCK_SIZE, Block},
     },
     kernel::fs::{
+        FileSystem,
         node::{NODE_SIZE, NODES_PER_BLOCK, Node},
-        superblock::Superblock,
     },
 };
 
 /// Represents a filesystem operation that buffers changes in memory before commiting them to
 /// persistent storage.
 pub struct Transaction<'a> {
-    superblock: &'a Superblock,
+    fs: &'a FileSystem,
     storage: &'a mut Storage,
     changes: HashMap<usize, Block>,
 }
 
 impl<'a> Transaction<'a> {
-    /// Constructs a [Transaction] for the given superblock and storage.
-    pub fn new(superblock: &'a Superblock, storage: &'a mut Storage) -> Self {
+    /// Constructs a [Transaction] for the given filesystem and storage.
+    pub fn new(fs: &'a FileSystem, storage: &'a mut Storage) -> Self {
         Self {
-            superblock,
+            fs,
             storage,
             changes: HashMap::new(),
         }
@@ -33,62 +33,74 @@ impl<'a> Transaction<'a> {
 
     /// Commits the transaction to persistent storage, consuming the transaction.
     pub fn commit(self) {
-        for (&index, block) in self.changes.iter() {
+        for (&block_index, block) in self.changes.iter() {
             self.storage
-                .write_block(index, block)
-                .expect("'index' must be a valid block index")
+                .write_block(block_index, block)
+                .expect("'block_index' must be a valid block index")
         }
     }
 
-    /// Reads the node at a given index from the node table.
-    pub fn read_node(&self, index: usize) -> Node {
-        assert!(
-            index < self.superblock.node_count,
-            "Index {} exceeds node count {}",
-            index,
-            self.superblock.node_count
-        );
-        let block_index = self.get_node_block_index(index);
-        let block = self.read_block(block_index);
-        let byte_offset = Self::get_node_byte_offset(index);
-        Node::read_from_bytes(&block.data[byte_offset..(byte_offset + NODE_SIZE)])
-            .expect("'bytes' must have length 'NODE_SIZE'")
+    /// Reads the node at a given node index from the node table.
+    pub fn read_node(&self, node_index: usize) -> Result<Node, Error> {
+        let block_index = self
+            .get_node_block_index(node_index)
+            .ok_or(Error::NodeIndexOutOfBounds)?;
+        let block = self.read_block(block_index)?;
+        let byte_offset = self
+            .get_node_byte_offset(node_index)
+            .ok_or(Error::NodeIndexOutOfBounds)?;
+        Ok(
+            Node::read_from_bytes(&block.data[byte_offset..(byte_offset + NODE_SIZE)])
+                .expect("'bytes' must have length 'NODE_SIZE'"),
+        )
     }
 
-    // Writes the node at a given index to the node table.
-    pub fn write_node(&mut self, index: usize, node: Node) {
-        assert!(
-            index < self.superblock.node_count,
-            "Index {} exceeds node count {}",
-            index,
-            self.superblock.node_count
-        );
-        let block_index = self.get_node_block_index(index);
-        let mut block = self.read_block(block_index);
-        let byte_offset = Self::get_node_byte_offset(index);
+    // Writes the node at a given node index to the node table.
+    pub fn write_node(&mut self, node_index: usize, node: Node) -> Result<(), Error> {
+        let block_index = self
+            .get_node_block_index(node_index)
+            .ok_or(Error::NodeIndexOutOfBounds)?;
+        let mut block = self.read_block(block_index)?;
+        let byte_offset = self
+            .get_node_byte_offset(node_index)
+            .ok_or(Error::NodeIndexOutOfBounds)?;
         block.data[byte_offset..(byte_offset + NODE_SIZE)].copy_from_slice(node.as_bytes());
         self.changes.insert(block_index, block);
+        Ok(())
     }
 
-    /// Reads the block at a given index.
-    fn read_block(&self, index: usize) -> Block {
+    /// Reads the block at a given block index.
+    fn read_block(&self, block_index: usize) -> Result<Block, Error> {
         // Check cached changes
-        match self.changes.get(&index) {
-            Some(block) => *block,
+        match self.changes.get(&block_index) {
+            Some(block) => Ok(*block),
             None => self
                 .storage
-                .read_block(index)
-                .expect("'block_index' must be a valid block index"),
+                .read_block(block_index)
+                .map_err(|_| Error::BlockIndexOutOfBounds),
         }
     }
 
     /// Returns the index of the block in which the node resides.
-    fn get_node_block_index(&self, index: usize) -> usize {
-        self.superblock.node_table_offset + (index * NODE_SIZE / BLOCK_SIZE)
+    fn get_node_block_index(&self, node_index: usize) -> Option<usize> {
+        if node_index < self.fs.superblock.node_count {
+            Some(self.fs.superblock.node_table_offset + (node_index * NODE_SIZE / BLOCK_SIZE))
+        } else {
+            None
+        }
     }
 
     /// Returns the byte offset of the node within the block.
-    fn get_node_byte_offset(index: usize) -> usize {
-        index % NODES_PER_BLOCK * NODE_SIZE
+    fn get_node_byte_offset(&self, node_index: usize) -> Option<usize> {
+        if node_index < self.fs.superblock.node_count {
+            Some(node_index % NODES_PER_BLOCK * NODE_SIZE)
+        } else {
+            None
+        }
     }
+}
+
+pub enum Error {
+    BlockIndexOutOfBounds,
+    NodeIndexOutOfBounds,
 }
