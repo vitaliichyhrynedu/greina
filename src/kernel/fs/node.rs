@@ -98,6 +98,7 @@ impl Extent {
     }
 }
 
+#[derive(Debug)]
 pub enum Error {
     OutOfExtents,
 }
