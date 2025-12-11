@@ -1,7 +1,12 @@
+use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
+
 use crate::{
     hardware::storage::Storage,
     kernel::fs::{
-        alloc_map::AllocMap, directory::Directory, superblock::Superblock, transaction::Transaction,
+        alloc_map::{AllocFlag, AllocMap},
+        directory::Directory,
+        superblock::Superblock,
+        transaction::Transaction,
     },
 };
 
@@ -65,5 +70,52 @@ impl FileSystem {
         }
 
         fs
+    }
+
+    /// Mounts the filesystem from the persistent storage.
+    ///
+    /// # Panics
+    /// ...
+    pub fn mount(storage: &Storage) -> Self {
+        // Read the superblock
+        let blocks = storage
+            .read_block(0)
+            .expect("Must be able to read the superblock");
+        let bytes = blocks.as_bytes();
+        let superblock = Superblock::read_from_bytes(&bytes[0..size_of::<Superblock>()])
+            .expect("'bytes' must be a valid 'Superblock'");
+
+        // Read the block allocation map
+        let block_map = Self::read_map(
+            storage,
+            superblock.block_map_offset,
+            superblock.node_map_offset,
+            superblock.block_count,
+        );
+
+        // Read the node allocation map
+        let node_map = Self::read_map(
+            storage,
+            superblock.node_map_offset,
+            superblock.node_table_offset,
+            superblock.node_count,
+        );
+
+        Self {
+            superblock,
+            block_map,
+            node_map,
+        }
+    }
+
+    fn read_map(storage: &Storage, map_start: usize, map_end: usize, count: usize) -> AllocMap {
+        let block_indices: Vec<usize> = (map_start..map_end).collect();
+        let blocks = storage
+            .read_blocks(&block_indices)
+            .expect("Must be able to read the allocation map");
+        let bytes = blocks.as_bytes();
+        let flags = <[AllocFlag]>::try_ref_from_bytes(bytes)
+            .expect("'bytes' must be a valid '<[AllocFlag]>'");
+        AllocMap::from_slice(&flags[..count])
     }
 }
