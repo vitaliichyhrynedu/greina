@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use zerocopy::{FromBytes, IntoBytes};
+use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
 
 use crate::{
     hardware::storage::{
@@ -9,8 +9,9 @@ use crate::{
     },
     kernel::fs::{
         FileSystem,
-        alloc_map::AllocMap,
-        node::{NODE_SIZE, NODES_PER_BLOCK, Node},
+        alloc_map::{self, AllocMap},
+        directory::{self, Directory, DirectoryEntry, FileType, Name},
+        node::{self, NODE_SIZE, NODES_PER_BLOCK, Node},
     },
 };
 
@@ -94,6 +95,143 @@ impl<'a> Transaction<'a> {
         Ok(())
     }
 
+    /// Allocates a [Node], returning its index.
+    pub fn create_node(&mut self) -> Result<usize, Error> {
+        let node = Node::default();
+        let (node_index, _) = self.fs.node_map.allocate(1).map_err(|e| Error::Alloc(e))?;
+        self.write_node(node_index, node)?;
+        Ok(node_index)
+    }
+
+    /// Allocates a physical block for the node and adds it to node's extents.
+    /// Returns the index of the allocated physical block.
+    fn grow_node(&mut self, node: &mut Node) -> Result<usize, Error> {
+        //
+        let (block_index, _) = self.fs.block_map.allocate(1).map_err(|e| Error::Alloc(e))?;
+        node.add_block(block_index).map_err(|e| Error::Node(e))?;
+        Ok(block_index)
+    }
+
+    /// Reads a number of bytes from the file starting from a given offset into the buffer.
+    /// Returns the number of bytes read.
+    pub fn read_file_at(
+        &self,
+        node_index: usize,
+        offset: usize,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
+        let node = self.read_node(node_index)?;
+
+        if offset >= node.size {
+            return Ok(0);
+        };
+
+        let bytes_available = node.size - offset;
+        let bytes_to_read = bytes_available.min(buf.len());
+        let mut bytes_read = 0;
+
+        while bytes_read != bytes_to_read {
+            let curr_pos = offset + bytes_read;
+            let offset_in_block = curr_pos % BLOCK_SIZE;
+            let block_index = node
+                .get_physical_block_from_offset(curr_pos)
+                .expect("'curr_pos' must be smaller than 'node.size'");
+            let data = self.read_block(block_index)?.data;
+            let chunk_size = (BLOCK_SIZE - offset_in_block).min(bytes_to_read - bytes_read);
+            buf[bytes_read..(bytes_read + chunk_size)]
+                .copy_from_slice(&data[offset_in_block..(offset_in_block + chunk_size)]);
+            bytes_read += chunk_size;
+        }
+
+        Ok(bytes_read)
+    }
+
+    /// Writes a byte slice to the file starting from a given offset.
+    /// Returns the number of byttes written.
+    pub fn write_file_at(
+        &mut self,
+        node_index: usize,
+        offset: usize,
+        data: &[u8],
+    ) -> Result<usize, Error> {
+        let mut node = self.read_node(node_index)?;
+
+        if offset > node.size {
+            return Ok(0);
+        };
+
+        let bytes_to_write = data.len();
+        let mut bytes_written = 0;
+
+        while bytes_written != bytes_to_write {
+            let curr_pos = offset + bytes_written;
+            let offset_in_block = curr_pos % BLOCK_SIZE;
+            let (block_index, has_grown) = match node.get_physical_block_from_offset(curr_pos) {
+                Some(index) => (index, false),
+                None => (self.grow_node(&mut node)?, true),
+            };
+            let chunk_size = (BLOCK_SIZE - offset_in_block).min(bytes_to_write - bytes_written);
+            let mut block = if chunk_size == BLOCK_SIZE || has_grown {
+                Block::new()
+            } else {
+                self.read_block(block_index)?
+            };
+            block.data[offset_in_block..(offset_in_block + chunk_size)]
+                .copy_from_slice(&data[bytes_written..(bytes_written + chunk_size)]);
+            self.write_block(block_index, &block);
+            bytes_written += chunk_size;
+        }
+
+        let end_pos = offset + bytes_written;
+        if end_pos > node.size {
+            node.size = end_pos;
+            self.write_node(node_index, node)?;
+        }
+
+        Ok(bytes_written)
+    }
+
+    /// Creates a file with the given name and type inside the specified parent directory, returning its node index.
+    pub fn create_file(
+        &mut self,
+        parent_index: usize,
+        name: &str,
+        filetype: FileType,
+    ) -> Result<usize, Error> {
+        let name = Name::new(name).map_err(|e| Error::Dir(e))?;
+        let node_index = self.create_node()?;
+        let entry = DirectoryEntry::new(node_index, filetype, name);
+        let mut parent = self.read_directory(parent_index)?;
+        parent.add_entry(entry);
+        self.write_directory(parent_index, &parent)?;
+        Ok(node_index)
+    }
+
+    /// Reads the directory.
+    pub fn read_directory(&self, node_index: usize) -> Result<Directory, Error> {
+        let node = self.read_node(node_index)?;
+        let mut buf = vec![0u8; node.size];
+        self.read_file_at(node_index, 0, &mut buf)?;
+        let dir_ents = <[DirectoryEntry]>::try_ref_from_bytes(&buf)
+            .expect("'buf' must contain a valid '[DirectoryEntry]'");
+        Ok(Directory::from_slice(dir_ents))
+    }
+
+    /// Writes the directory.
+    pub fn write_directory(&mut self, node_index: usize, dir: &Directory) -> Result<(), Error> {
+        let bytes = dir.as_slice().as_bytes();
+        self.write_file_at(node_index, 0, bytes)?;
+        Ok(())
+    }
+
+    /// Creates a directory with the given name inside the specified parent directory, returning its node index.
+    pub fn create_directory(&mut self, parent_index: usize, name: &str) -> Result<usize, Error> {
+        let node_index = self.create_file(parent_index, name, FileType::Directory)?;
+        let dir = Directory::new(node_index, parent_index);
+        self.write_directory(node_index, &dir)?;
+        Ok(node_index)
+    }
+
     /// Reads the physical block.
     pub fn read_block(&self, block_index: usize) -> Result<Block, Error> {
         // Check cached changes
@@ -114,28 +252,6 @@ impl<'a> Transaction<'a> {
     /// Queues a write of the physical block.
     pub fn write_block(&mut self, block_index: usize, block: &Block) {
         Self::buffer_write_block(&mut self.changes, block_index, block);
-    }
-
-    /// Reads the logical block that belongs to the node.
-    pub fn read_logical_block(&self, node: &Node, logical_index: usize) -> Result<Block, Error> {
-        let block_index = node
-            .get_physical_block(logical_index)
-            .ok_or(Error::LogicalIndexOutOfBounds)?;
-        self.read_block(block_index)
-    }
-
-    /// Queues a write of the logical block that belongs to the node.
-    pub fn write_logical_block(
-        &mut self,
-        node: Node,
-        logical_index: usize,
-        block: &Block,
-    ) -> Result<(), Error> {
-        let block_index = node
-            .get_physical_block(logical_index)
-            .ok_or(Error::LogicalIndexOutOfBounds)?;
-        self.write_block(block_index, block);
-        Ok(())
     }
 
     /// Returns the index of the block in which the node resides.
@@ -161,4 +277,7 @@ pub enum Error {
     BlockIndexOutOfBounds,
     NodeIndexOutOfBounds,
     LogicalIndexOutOfBounds,
+    Alloc(alloc_map::Error),
+    Dir(directory::Error),
+    Node(node::Error),
 }

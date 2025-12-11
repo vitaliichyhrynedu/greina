@@ -16,15 +16,15 @@ const EXTENTS_PER_NODE: usize = 15;
 #[derive(Default, Clone, Copy)]
 #[derive(FromBytes, IntoBytes, Immutable)]
 pub struct Node {
-    pub size: u64,
+    pub size: usize,
     pub link_count: u64,
     pub extents: [Extent; EXTENTS_PER_NODE],
 }
 
 impl Node {
     /// Resolves the logical block index into a physical block index.
-    pub fn get_physical_block(&self, logical_index: usize) -> Option<usize> {
-        let mut offset = logical_index;
+    pub fn get_physical_block(&self, logical_block: usize) -> Option<usize> {
+        let mut offset = logical_block;
         for extent in self.extents.iter().take_while(|e| !e.is_null()) {
             let blocks_in_extent = extent.block_count();
             if blocks_in_extent > offset {
@@ -37,8 +37,13 @@ impl Node {
 
     /// Resolves the byte offset into a physical block index.
     pub fn get_physical_block_from_offset(&self, byte_offset: usize) -> Option<usize> {
-        let logical_index = byte_offset / BLOCK_SIZE;
-        self.get_physical_block(logical_index)
+        let logical_block = Self::get_logical_block_from_offset(byte_offset);
+        self.get_physical_block(logical_block)
+    }
+
+    /// Converts a byte offset into a logical block index
+    pub const fn get_logical_block_from_offset(byte_offset: usize) -> usize {
+        byte_offset / BLOCK_SIZE
     }
 
     /// Returns the number of logical blocks that belong to the node.
@@ -48,6 +53,27 @@ impl Node {
             .filter(|e| !e.is_null())
             .map(|e| e.end - e.start)
             .sum()
+    }
+
+    /// Adds the physical block to node's extents.
+    pub fn add_block(&mut self, block_index: usize) -> Result<(), Error> {
+        for i in 0..self.extents.len() {
+            if self.extents[i].is_null() {
+                // Check if we can merge with the previous extent
+                if i > 0 {
+                    let prev_idx = i - 1;
+                    if self.extents[prev_idx].end == block_index {
+                        self.extents[prev_idx].end += 1;
+                        return Ok(());
+                    }
+                }
+                // Cannot merge (or first extent)
+                self.extents[i].start = block_index;
+                self.extents[i].end = block_index + 1;
+                return Ok(());
+            }
+        }
+        Err(Error::OutOfExtents)
     }
 }
 
@@ -70,4 +96,8 @@ impl Extent {
     pub fn block_count(&self) -> usize {
         self.end - self.start
     }
+}
+
+pub enum Error {
+    OutOfExtents,
 }

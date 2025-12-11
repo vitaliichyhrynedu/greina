@@ -115,15 +115,15 @@ pub struct Name {
 }
 
 impl Name {
-    /// Tries to construct a valid directory entry name from a string.
-    pub fn new(string: &str) -> Option<Self> {
+    /// Constructs a valid directory entry name from a string.
+    pub fn new(string: &str) -> Result<Self, Error> {
         let len = string.len();
         if len > MAX_NAME_LEN {
-            return None;
+            return Err(Error::InvalidName);
         }
         let mut bytes = [0u8; MAX_NAME_LEN];
         bytes[..len].copy_from_slice(string.as_bytes());
-        Some(Self { bytes })
+        Ok(Self { bytes })
     }
 
     /// Returns the string representation of the name.
@@ -146,6 +146,8 @@ pub enum FileType {
     Directory,
 }
 
+#[derive(Debug)]
 pub enum Error {
     EntryNotFound,
+    InvalidName,
 }
