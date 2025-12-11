@@ -133,13 +133,18 @@ impl<'a> Transaction<'a> {
         while bytes_read != bytes_to_read {
             let curr_pos = offset + bytes_read;
             let offset_in_block = curr_pos % BLOCK_SIZE;
-            let block_index = node
-                .get_physical_block_from_offset(curr_pos)
-                .expect("'curr_pos' must be smaller than 'node.size'");
-            let data = self.read_block(block_index)?.data;
             let chunk_size = (BLOCK_SIZE - offset_in_block).min(bytes_to_read - bytes_read);
-            buf[bytes_read..(bytes_read + chunk_size)]
-                .copy_from_slice(&data[offset_in_block..(offset_in_block + chunk_size)]);
+            match node.get_physical_block_from_offset(curr_pos) {
+                Some(block_index) => {
+                    let data = self.read_block(block_index)?.data;
+                    buf[bytes_read..(bytes_read + chunk_size)]
+                        .copy_from_slice(&data[offset_in_block..(offset_in_block + chunk_size)]);
+                }
+                // Handle a sparse file
+                None => {
+                    buf[bytes_read..(bytes_read + chunk_size)].fill(0u8);
+                }
+            };
             bytes_read += chunk_size;
         }
 
