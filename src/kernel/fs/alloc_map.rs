@@ -64,7 +64,7 @@ impl AllocMap {
             .flags
             .get_mut(span.0..span.1)
             .ok_or(Error::IndexOutOfBounds)?;
-        if span.iter().any(|&f| f == AllocFlag::Used) {
+        if span.contains(&AllocFlag::Used) {
             return Err(Error::ObjectOccupied);
         }
         span.fill(AllocFlag::Used);

@@ -14,12 +14,7 @@ impl Storage {
     /// Panics if:
     /// - `size` is not a multiple of [BLOCK_SIZE]
     pub fn new(size: usize) -> Self {
-        assert!(
-            size % BLOCK_SIZE == 0,
-            "'size' {} is not a multiple of 'BLOCK_SIZE' {}",
-            size,
-            BLOCK_SIZE
-        );
+        assert!(size.is_multiple_of(BLOCK_SIZE));
         let block_count = size / BLOCK_SIZE;
         let blocks = vec![Block::new(); block_count].into_boxed_slice();
         Self { blocks }

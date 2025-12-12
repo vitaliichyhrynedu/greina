@@ -108,7 +108,7 @@ impl Node {
                     self.extents[curr].end = phys_block + 1;
                 } else {
                     let next = curr + 1;
-                    if !(next < self.extents.len()) {
+                    if next >= self.extents.len() {
                         return Err(Error::OutOfExtents);
                     }
                     // Make the current extent a hole and map the next one

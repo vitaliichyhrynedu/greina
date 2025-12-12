@@ -78,7 +78,7 @@ impl<'a> Transaction<'a> {
             let block_index = map_offset + i;
             let block_stored = Self::_read_block(storage, changes, block_index)
                 .expect("Must be able to read the allocation map");
-            if !(block_mem.data == block_stored.data) {
+            if block_mem.data != block_stored.data {
                 Self::_write_block(changes, map_offset + i, &block_mem);
             }
         }
@@ -116,7 +116,7 @@ impl<'a> Transaction<'a> {
     /// Allocates a [Node], returning it and its index.
     pub fn create_node(&mut self, filetype: FileType) -> Result<(Node, usize), Error> {
         let node = Node::new(filetype);
-        let (node_index, _) = self.fs.node_map.allocate(1).map_err(|e| Error::Alloc(e))?;
+        let (node_index, _) = self.fs.node_map.allocate(1).map_err(Error::Alloc)?;
         self.write_node(node_index, node)?;
         Ok((node, node_index))
     }
@@ -185,10 +185,9 @@ impl<'a> Transaction<'a> {
                 Some(index) => (index, false),
                 None => {
                     // Allocate a physical block
-                    let (phys_block, _) =
-                        self.fs.block_map.allocate(1).map_err(|e| Error::Alloc(e))?;
+                    let (phys_block, _) = self.fs.block_map.allocate(1).map_err(Error::Alloc)?;
                     node.map_block(logic_block, phys_block)
-                        .map_err(|e| Error::Node(e))?;
+                        .map_err(Error::Node)?;
                     (phys_block, true)
                 }
             };
@@ -240,7 +239,7 @@ impl<'a> Transaction<'a> {
                 self.fs
                     .block_map
                     .free(extent.span())
-                    .map_err(|e| Error::Alloc(e))?;
+                    .map_err(Error::Alloc)?;
                 extent.nullify();
             } else if blocks_passed + extent_len >= blocks_needed {
                 // Extent is partially needed
@@ -249,7 +248,7 @@ impl<'a> Transaction<'a> {
                 self.fs
                     .block_map
                     .free((new_end, extent.end()))
-                    .map_err(|e| Error::Alloc(e))?;
+                    .map_err(Error::Alloc)?;
                 extent.shrink(blocks_keep);
             }
             blocks_passed += extent_len;
@@ -267,7 +266,7 @@ impl<'a> Transaction<'a> {
         name: &str,
         filetype: FileType,
     ) -> Result<usize, Error> {
-        let name = Name::new(name).map_err(|e| Error::Dir(e))?;
+        let name = Name::new(name).map_err(Error::Dir)?;
 
         let (mut node, node_index) = self.create_node(FileType::File)?;
         node.link_count += 1;
@@ -314,7 +313,7 @@ impl<'a> Transaction<'a> {
         node_index: usize,
         name: &str,
     ) -> Result<(), Error> {
-        let name = Name::new(name).map_err(|e| Error::Dir(e))?;
+        let name = Name::new(name).map_err(Error::Dir)?;
 
         let mut node = self.read_node(node_index)?;
         if node.filetype() != FileType::File {
@@ -333,14 +332,14 @@ impl<'a> Transaction<'a> {
 
     /// Removes a hard link to the file with a given name.
     pub fn unlink_file(&mut self, parent_index: usize, name: &str) -> Result<(), Error> {
-        let name = Name::new(name).map_err(|e| Error::Dir(e))?;
+        let name = Name::new(name).map_err(Error::Dir)?;
 
         let mut dir = self.read_directory(parent_index)?;
         let entry = dir.get_entry(name).ok_or(Error::FileNotFound)?;
         if entry.filetype() != FileType::File {
             return Err(Error::FileTypeNotLinkable);
         }
-        let node_index = dir.remove_entry(name).map_err(|e| Error::Dir(e))?;
+        let node_index = dir.remove_entry(name).map_err(Error::Dir)?;
         self.write_directory(parent_index, &dir)?;
 
         let mut node = self.read_node(node_index)?;
@@ -355,13 +354,13 @@ impl<'a> Transaction<'a> {
                 self.fs
                     .block_map
                     .free(extent.span())
-                    .map_err(|e| Error::Alloc(e))?;
+                    .map_err(Error::Alloc)?;
                 extent.nullify();
             }
             self.fs
                 .node_map
                 .free((node_index, node_index + 1))
-                .map_err(|e| Error::Alloc(e))?;
+                .map_err(Error::Alloc)?;
             node = Node::default();
         }
         self.write_node(node_index, node)?;
@@ -387,7 +386,7 @@ impl<'a> Transaction<'a> {
 
     /// Reads the physical block.
     pub fn read_block(&self, block_index: usize) -> Result<Block, Error> {
-        Self::_read_block(&self.storage, &self.changes, block_index)
+        Self::_read_block(self.storage, &self.changes, block_index)
     }
 
     // Internal implementation of 'write_block'.
