@@ -178,7 +178,8 @@ impl Kernel {
 
     /// Mounts the filesystem.
     pub fn mount(&mut self) -> Result<()> {
-        self.fs = Some(Filesystem::mount(&mut self.storage));
+        let fs = Filesystem::mount(&mut self.storage).ok_or(Error::InvalidFilesystem)?;
+        self.fs = Some(fs);
         self.open_files.clear();
         Ok(())
     }
@@ -212,6 +213,7 @@ pub enum Error {
     InvalidFileDescriptor,
     FilesystemNotMounted,
     FileAlreadyExists,
+    InvalidFilesystem,
 }
 
 impl From<transaction::Error> for Error {

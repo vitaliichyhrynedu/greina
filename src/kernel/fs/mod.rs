@@ -1,7 +1,7 @@
 use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
 
 use crate::{
-    hardware::storage::Storage,
+    hardware::storage::{Storage, block::Block},
     kernel::fs::{
         alloc_map::{AllocFlag, AllocMap},
         directory::Dir,
@@ -57,9 +57,13 @@ impl Filesystem {
             node_map,
         };
 
-        // Initialize the root directory
         {
+            // Write superblock
+            let superblock = Block::from(&fs.superblock);
             let mut tx = Transaction::new(&mut fs, storage);
+            tx.write_block(superblock::SUPER_INDEX, &superblock);
+
+            // Initialize the root directory
             let (_, root_index) = tx
                 .create_node(FileType::Dir)
                 .expect("Must be able to create the root node");
@@ -67,6 +71,7 @@ impl Filesystem {
             let root = Dir::new(root_index, root_index);
             tx.write_directory(root_index, &root)
                 .expect("Must be able to write the root directory");
+
             tx.commit();
         }
 
@@ -77,15 +82,19 @@ impl Filesystem {
     ///
     /// # Panics
     /// ...
-    pub fn mount(storage: &Storage) -> Self {
+    pub fn mount(storage: &Storage) -> Option<Self> {
         // Read the superblock
-        // TODO: Check whether the superblock is a valid superblock (with a magic number).
         let blocks = storage
             .read_block(0)
             .expect("Must be able to read the superblock");
         let bytes = blocks.as_bytes();
         let superblock = Superblock::read_from_bytes(&bytes[0..size_of::<Superblock>()])
             .expect("'bytes' must be a valid 'Superblock'");
+
+        // Verify magic
+        if superblock.magic != superblock::MAGIC {
+            return None;
+        }
 
         // Read the block allocation map
         let block_map = Self::read_map(
@@ -103,11 +112,11 @@ impl Filesystem {
             superblock.node_count,
         );
 
-        Self {
+        Some(Self {
             superblock,
             block_map,
             node_map,
-        }
+        })
     }
 
     fn read_map(storage: &Storage, map_start: usize, map_end: usize, count: usize) -> AllocMap {

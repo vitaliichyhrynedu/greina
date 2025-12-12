@@ -1,11 +1,18 @@
 use super::{alloc_map::AllocFlag, node::Node};
-use crate::hardware::storage::block::BLOCK_SIZE;
+use crate::hardware::storage::block::{BLOCK_SIZE, Block};
 use zerocopy::{FromBytes, Immutable, IntoBytes};
+
+/// A magic number to identify the filesystem.
+pub const MAGIC: usize = 0xF5F5_F5F5;
+
+/// Superblock index.
+pub const SUPER_INDEX: usize = 0;
 
 /// Represents metadata about the file system.
 #[repr(C)]
 #[derive(FromBytes, IntoBytes, Immutable)]
 pub struct Superblock {
+    pub magic: usize,
     pub block_count: usize,
     pub node_count: usize,
     // Region offsets (specified in blocks)
@@ -34,6 +41,7 @@ impl Superblock {
         let data_offset = node_table_offset + node_table_blocks;
 
         Self {
+            magic: MAGIC,
             block_count,
             node_count,
             block_map_offset,
@@ -41,5 +49,12 @@ impl Superblock {
             node_table_offset,
             data_offset,
         }
+    }
+}
+
+impl From<&Superblock> for Block {
+    fn from(value: &Superblock) -> Self {
+        let bytes = value.as_bytes();
+        Block::new(bytes)
     }
 }
