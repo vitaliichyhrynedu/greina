@@ -10,7 +10,7 @@ pub mod syscall;
 /// A model for the kernel.
 pub struct Kernel {
     storage: Storage,
-    filesystem: Option<Filesystem>,
+    fs: Option<Filesystem>,
     open_files: OpenFileTable,
 }
 
@@ -19,7 +19,7 @@ impl Kernel {
     pub fn new(storage: Storage) -> Self {
         Self {
             storage,
-            filesystem: None,
+            fs: None,
             open_files: OpenFileTable::new(),
         }
     }

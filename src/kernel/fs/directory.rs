@@ -112,6 +112,10 @@ impl DirEntry {
     pub fn node_index(&self) -> usize {
         self.node_index
     }
+
+    pub fn name(&self) -> Result<&str> {
+        self.name.as_str()
+    }
 }
 
 /// How long a directory entry name can be.
