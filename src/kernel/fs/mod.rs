@@ -79,6 +79,7 @@ impl Filesystem {
     /// ...
     pub fn mount(storage: &Storage) -> Self {
         // Read the superblock
+        // TODO: Check whether the superblock is a valid superblock (with a magic number).
         let blocks = storage
             .read_block(0)
             .expect("Must be able to read the superblock");
