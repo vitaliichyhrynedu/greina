@@ -8,7 +8,7 @@ use crate::{
         block::{BLOCK_SIZE, Block},
     },
     kernel::fs::{
-        FileSystem,
+        FileSystem, ROOT_INDEX,
         alloc_map::{self, AllocMap},
         directory::{self, Dir, DirEntry, DirEntryName},
         node::{self, FileType, NODE_SIZE, NODES_PER_BLOCK, Node},
@@ -352,6 +352,15 @@ impl<'a> Transaction<'a> {
         self.write_node(node_index, node)?;
 
         Ok(())
+    }
+
+    // NOTE: Only works with the root directory for now.
+    /// Resolves a filename to a node index.
+    pub fn lookup(&self, name: &str) -> Result<usize> {
+        let name = DirEntryName::try_from(name).map_err(Error::Dir)?;
+        let dir = self.read_directory(ROOT_INDEX)?;
+        let entry = dir.get_entry(name).ok_or(Error::FileNotFound)?;
+        Ok(entry.node_index())
     }
 
     // Internal implementation of 'read_block'.

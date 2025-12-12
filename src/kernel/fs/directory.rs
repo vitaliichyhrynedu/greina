@@ -18,12 +18,12 @@ impl Dir {
         dir
     }
 
-    /// Returns a reference to an entry with a given name.
+    /// Returns a reference to the entry with a given name.
     pub fn get_entry(&self, name: DirEntryName) -> Option<&DirEntry> {
         self.entries.iter().find(|e| e.name == name && !e.is_null())
     }
 
-    /// Returns a mutable reference to an entry with a given name.
+    /// Returns a mutable reference to the entry with a given name.
     pub fn get_mut_entry(&mut self, name: DirEntryName) -> Option<&mut DirEntry> {
         self.entries
             .iter_mut()
@@ -42,8 +42,8 @@ impl Dir {
     /// Removes the entry from the directory, returning its node index.
     pub fn remove_entry(&mut self, name: DirEntryName) -> Result<usize> {
         let entry = self.get_mut_entry(name).ok_or(Error::EntryNotFound)?;
-        let node_index = entry.index;
-        entry.index = 0;
+        let node_index = entry.node_index;
+        entry.node_index = 0;
         Ok(node_index)
     }
 
@@ -67,15 +67,15 @@ impl Dir {
 pub struct DirEntry {
     filetype: FileType,
     _pad: [u8; 7],
-    index: usize,
+    node_index: usize,
     name: DirEntryName,
 }
 
 impl DirEntry {
     /// Constructs a directory entry with given parameters
-    pub fn new(index: usize, filetype: FileType, name: DirEntryName) -> Self {
+    pub fn new(node_index: usize, filetype: FileType, name: DirEntryName) -> Self {
         Self {
-            index,
+            node_index,
             _pad: [0u8; 7],
             filetype,
             name,
@@ -102,11 +102,15 @@ impl DirEntry {
 
     /// Checks if the directory entry does not point to any node.
     pub fn is_null(&self) -> bool {
-        self.index == 0
+        self.node_index == 0
     }
 
     pub fn filetype(&self) -> FileType {
         self.filetype
+    }
+
+    pub fn node_index(&self) -> usize {
+        self.node_index
     }
 }
 
