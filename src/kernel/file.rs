@@ -1,3 +1,5 @@
+use crate::kernel::fs::node::{FileType, Node};
+
 /// Used to index the open file table.
 pub type FileDescriptorNumber = usize;
 
@@ -18,5 +20,25 @@ impl FileDescriptor {
 
     pub fn node_index(&self) -> usize {
         self.node_index
+    }
+}
+
+pub struct FileStats {
+    pub node_index: usize,
+    pub filetype: FileType,
+    pub link_count: u32,
+    pub size: usize,
+    pub block_count: usize,
+}
+
+impl FileStats {
+    pub fn new(node_index: usize, node: Node) -> Self {
+        Self {
+            node_index,
+            filetype: node.filetype(),
+            link_count: node.link_count,
+            size: node.size,
+            block_count: node.block_count(),
+        }
     }
 }
