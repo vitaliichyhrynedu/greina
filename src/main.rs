@@ -159,6 +159,9 @@ fn main() {
                 }
                 Err(e) => println!("Error: {:?}", e),
             },
+            "clear" => {
+                print!("\x1b[2J\x1b[1;1H");
+            }
             "exit" => break,
             "help" => {
                 println!("COMMANDS");
@@ -176,6 +179,7 @@ fn main() {
                     ("truncate <name> <size>", "resize file"),
                     ("stat <name>", "display file stats"),
                     ("ls", "list \"/\" directory"),
+                    ("clear", "clear the screen"),
                     ("exit", "exit the shell"),
                 ];
                 for (cmd, desc) in commands {
