@@ -216,7 +216,7 @@ impl<'a> Transaction<'a> {
         let mut node = self.read_node(node_index)?;
 
         if node.filetype() != FileType::File {
-            return Err(Error::FileTypeNotTruncateable);
+            return Err(Error::NotFile);
         }
 
         if size >= node.size {
@@ -334,9 +334,10 @@ impl<'a> Transaction<'a> {
         let name = DirEntryName::try_from(name).map_err(Error::Dir)?;
 
         let mut node = self.read_node(node_index)?;
-        if node.filetype() != FileType::File {
-            return Err(Error::FileTypeNotLinkable);
+        if node.filetype() == FileType::Dir {
+            return Err(Error::IsDir);
         }
+
         node.link_count += 1;
         self.write_node(node_index, node)?;
 
@@ -355,19 +356,22 @@ impl<'a> Transaction<'a> {
 
         let mut dir = self.read_directory(parent_index)?;
         let entry = dir.get_entry(name).ok_or(Error::NodeNotFound)?;
-        if entry.filetype() != FileType::File {
-            return Err(Error::FileTypeNotLinkable);
+        if entry.filetype() == FileType::Dir {
+            return Err(Error::IsDir);
         }
+
         let node_index = dir.remove_entry(name).map_err(Error::Dir)?;
         self.write_directory(parent_index, &dir)?;
 
         let mut node = self.read_node(node_index)?;
         node.link_count -= 1;
+
         if node.link_count == 0 && free {
             self.delete_node(node_index)?;
         } else {
             self.write_node(node_index, node)?;
         }
+
         Ok(())
     }
 
@@ -475,9 +479,9 @@ pub enum Error {
     Dir(directory::Error),
     Node(node::Error),
     NodeNotFound,
-    FileTypeNotLinkable,
-    FileTypeNotTruncateable,
+    NotFile,
     NotDir,
+    IsDir,
     CorruptedDir,
     DirNotEmpty,
 }
