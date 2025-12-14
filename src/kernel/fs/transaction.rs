@@ -282,11 +282,13 @@ impl<'a> Transaction<'a> {
     /// Reads the directory.
     pub fn read_directory(&self, node_index: usize) -> Result<Dir> {
         let node = self.read_node(node_index)?;
+        if node.filetype() != FileType::Dir {
+            return Err(Error::NotDir);
+        }
         let mut buf = vec![0u8; node.size];
         self.read_file_at(node_index, 0, &mut buf)?;
-        let dir_ents = <[DirEntry]>::try_ref_from_bytes(&buf)
-            .expect("'buf' must contain a valid '[DirEntry]'");
-        Ok(Dir::from_slice(dir_ents))
+        let entries = <[DirEntry]>::try_ref_from_bytes(&buf).map_err(|_| Error::CorruptedDir)?;
+        Ok(Dir::from_slice(entries))
     }
 
     /// Writes the directory.
@@ -376,9 +378,8 @@ impl<'a> Transaction<'a> {
         let parent = if is_absolute { ROOT_INDEX } else { curr_dir };
         let mut curr_node = parent;
 
-        let mut tokens = path.split('/').filter(|t| !t.is_empty()).peekable();
-
-        while let Some(token) = tokens.next() {
+        let tokens = path.split('/').filter(|t| !t.is_empty());
+        for token in tokens {
             let dir = self.read_directory(curr_node)?;
             let name = DirEntryName::try_from(token)?;
             let entry = dir.get_entry(name).ok_or(Error::NodeNotFound)?;
@@ -388,13 +389,6 @@ impl<'a> Transaction<'a> {
                 curr_node = self.resolve_symlink(entry.node_index(), curr_node)?;
             } else {
                 curr_node = entry.node_index();
-            }
-
-            if tokens.peek().is_some() {
-                let node = self.read_node(curr_node)?;
-                if node.filetype() != FileType::Dir {
-                    return Err(Error::NotDir);
-                }
             }
         }
         Ok(curr_node)
@@ -461,6 +455,7 @@ pub enum Error {
     FileTypeNotLinkable,
     FileTypeNotTruncateable,
     NotDir,
+    CorruptedDir,
 }
 
 impl From<directory::Error> for Error {
