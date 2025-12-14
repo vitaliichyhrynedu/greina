@@ -47,6 +47,11 @@ impl Dir {
         Ok(node_index)
     }
 
+    /// Checks if the directory is empty (contains only `.` and `..` entries).
+    pub fn is_empty(&self) -> bool {
+        self.entries.len() == 2
+    }
+
     /// Returns a view of the directory as a slice of [DirEntry].
     pub fn as_slice(&self) -> &[DirEntry] {
         self.entries.as_slice()

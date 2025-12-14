@@ -306,6 +306,29 @@ impl<'a> Transaction<'a> {
         Ok(node_index)
     }
 
+    /// Removes the empty directory `name` inside the parent directory pointed to by `parent`.
+    pub fn remove_directory(&mut self, parent: usize, name: &str) -> Result<()> {
+        let mut parent_dir = self.read_directory(parent)?;
+
+        let name = DirEntryName::try_from(name)?;
+        let entry = parent_dir.get_entry(name).ok_or(Error::NodeNotFound)?;
+
+        if entry.filetype() != FileType::Dir {
+            return Err(Error::NotDir);
+        }
+
+        let node_index = entry.node_index();
+        let dir = self.read_directory(node_index)?;
+        if !dir.is_empty() {
+            return Err(Error::DirNotEmpty);
+        }
+
+        parent_dir.remove_entry(name)?;
+        self.write_directory(parent, &parent_dir)?;
+
+        self.delete_node(node_index)
+    }
+
     /// Creates a hard link to the file with a given name.
     pub fn link_file(&mut self, parent_index: usize, node_index: usize, name: &str) -> Result<()> {
         let name = DirEntryName::try_from(name).map_err(Error::Dir)?;
@@ -456,6 +479,7 @@ pub enum Error {
     FileTypeNotTruncateable,
     NotDir,
     CorruptedDir,
+    DirNotEmpty,
 }
 
 impl From<directory::Error> for Error {
