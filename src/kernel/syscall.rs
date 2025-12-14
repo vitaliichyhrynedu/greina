@@ -2,9 +2,10 @@ use crate::kernel::{
     Kernel,
     file::{FileDescription, FileDescriptor, FileStats},
     fs::{
-        Filesystem, ROOT_INDEX,
-        directory::DirEntryName,
+        Filesystem,
+        directory::{self},
         node::FileType,
+        path::Path,
         transaction::{self, Transaction},
     },
 };
@@ -12,22 +13,12 @@ use crate::kernel::{
 impl Kernel {
     /// Creates a file at `path`, if it doesn't exist.
     pub fn create(&mut self, path: &str) -> Result<()> {
-        if path.ends_with('/') {
-            return Err(Error::IsDir);
-        }
-
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let mut tx = Transaction::new(fs, &mut self.storage);
 
-        let (parent, name) = Self::split_path(path);
+        let path = Path::new(path);
+        let (parent, name) = path.split_last().ok_or(Error::NotPermitted)?;
         let parent = tx.find_node(parent, self.curr_dir)?;
-
-        let dir = tx.read_directory(parent)?;
-        let entry_name = DirEntryName::try_from(path).map_err(transaction::Error::from)?;
-        if dir.get_entry(entry_name).is_some() {
-            tx.commit();
-            return Err(Error::FileExists);
-        }
 
         tx.create_file(parent, name, FileType::File)?;
         tx.commit();
@@ -39,6 +30,7 @@ impl Kernel {
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let tx = Transaction::new(fs, &mut self.storage);
 
+        let path = Path::new(path);
         let node_index = tx.find_node(path, self.curr_dir)?;
         tx.commit();
 
@@ -113,17 +105,12 @@ impl Kernel {
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let mut tx = Transaction::new(fs, &mut self.storage);
 
+        let old_path = Path::new(old_path);
         let node_index = tx.find_node(old_path, self.curr_dir)?;
 
-        let (parent, name) = Self::split_path(new_path);
+        let new_path = Path::new(new_path);
+        let (parent, name) = new_path.split_last().ok_or(Error::NotPermitted)?;
         let parent = tx.find_node(parent, self.curr_dir)?;
-
-        let dir = tx.read_directory(parent)?;
-        let entry_name = DirEntryName::try_from(new_path).map_err(transaction::Error::from)?;
-        if dir.get_entry(entry_name).is_some() {
-            tx.commit();
-            return Err(Error::FileExists);
-        }
 
         tx.link_file(parent, node_index, name)?;
         tx.commit();
@@ -137,9 +124,10 @@ impl Kernel {
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let mut tx = Transaction::new(fs, &mut self.storage);
 
+        let path = Path::new(path);
         let node_index = tx.find_node(path, self.curr_dir)?;
 
-        let (parent, name) = Self::split_path(path);
+        let (parent, name) = path.split_last().ok_or(Error::NotPermitted)?;
         let parent = tx.find_node(parent, self.curr_dir)?;
 
         let is_opened = self
@@ -157,7 +145,9 @@ impl Kernel {
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let mut tx = Transaction::new(fs, &mut self.storage);
 
+        let path = Path::new(path);
         let node_index = tx.find_node(path, self.curr_dir)?;
+
         tx.truncate_file(node_index, size)?;
         tx.commit();
         Ok(())
@@ -168,6 +158,7 @@ impl Kernel {
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let tx = Transaction::new(fs, &mut self.storage);
 
+        let path = Path::new(path);
         let node_index = tx.find_node(path, self.curr_dir)?;
         let node = tx.read_node(node_index)?;
         tx.commit();
@@ -179,7 +170,8 @@ impl Kernel {
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let mut tx = Transaction::new(fs, &mut self.storage);
 
-        let (parent, name) = Self::split_path(path);
+        let path = Path::new(path);
+        let (parent, name) = path.split_last().ok_or(Error::NotPermitted)?;
         let parent = tx.find_node(parent, self.curr_dir)?;
 
         tx.create_directory(parent, name)?;
@@ -189,17 +181,14 @@ impl Kernel {
 
     /// Deletes the directory at `path`.
     pub fn rmdir(&mut self, path: &str) -> Result<()> {
-        let path = path.trim_end_matches('/');
-
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let mut tx = Transaction::new(fs, &mut self.storage);
 
-        let node_index = tx.find_node(path, self.curr_dir)?;
-        if node_index == ROOT_INDEX {
+        let path = Path::new(path);
+        let (parent, name) = path.split_last().ok_or(Error::NotPermitted)?;
+        if name == "." || name == ".." {
             return Err(Error::NotPermitted);
         }
-
-        let (parent, name) = Self::split_path(path);
         let parent = tx.find_node(parent, self.curr_dir)?;
 
         tx.remove_directory(parent, name)?;
@@ -212,6 +201,7 @@ impl Kernel {
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let tx = Transaction::new(fs, &mut self.storage);
 
+        let path = Path::new(path);
         let node_index = tx.find_node(path, self.curr_dir)?;
         let node = tx.read_node(node_index)?;
         if node.filetype() != FileType::Dir {
@@ -228,6 +218,7 @@ impl Kernel {
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
         let tx = Transaction::new(fs, &mut self.storage);
 
+        let path = Path::new(path);
         let node_index = tx.find_node(path, self.curr_dir)?;
         let dir = tx.read_directory(node_index)?;
         tx.commit();
@@ -281,20 +272,6 @@ impl Kernel {
         }
         fd
     }
-
-    /// Splits `path` into parent directory and file name
-    fn split_path(path: &str) -> (&str, &str) {
-        match path.rsplit_once('/') {
-            Some((parent, name)) => {
-                if parent.is_empty() {
-                    ("/", name)
-                } else {
-                    (parent, name)
-                }
-            }
-            None => (".", path),
-        }
-    }
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -305,14 +282,18 @@ pub enum Error {
     InvalidFilesystem,
     Filesystem(transaction::Error),
     InvalidFileDescriptor,
-    FileExists,
-    NotDir,
     NotPermitted,
-    IsDir,
+    NotDir,
 }
 
 impl From<transaction::Error> for Error {
     fn from(value: transaction::Error) -> Self {
         Self::Filesystem(value)
+    }
+}
+
+impl From<directory::Error> for Error {
+    fn from(value: directory::Error) -> Self {
+        Self::Filesystem(transaction::Error::from(value))
     }
 }

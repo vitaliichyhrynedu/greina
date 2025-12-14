@@ -12,6 +12,7 @@ use crate::{
         alloc_map::{self, AllocMap},
         directory::{self, Dir, DirEntry, DirEntryName},
         node::{self, FileType, NODE_SIZE, NODES_PER_BLOCK, Node},
+        path::Path,
     },
 };
 
@@ -407,22 +408,27 @@ impl<'a> Transaction<'a> {
     }
 
     /// Finds the node at `path`, using `curr_dir` as parent if `path` is relative.
-    pub fn find_node(&self, path: &str, curr_dir: usize) -> Result<usize> {
-        let is_absolute = path.starts_with('/');
-        let parent = if is_absolute { ROOT_INDEX } else { curr_dir };
-        let mut curr_node = parent;
+    /// If `path` is empty, returns `curr_dir`.
+    pub fn find_node(&self, path: Path, curr_dir: usize) -> Result<usize> {
+        let mut curr_node = curr_dir;
+        for part in path.as_parts() {
+            match part {
+                "/" => {
+                    curr_node = ROOT_INDEX;
+                    continue;
+                }
+                "." => continue,
+                _ => (),
+            }
 
-        let tokens = path.split('/').filter(|t| !t.is_empty());
-        for token in tokens {
             let dir = self.read_directory(curr_node)?;
-            let name = DirEntryName::try_from(token)?;
+            let name = DirEntryName::try_from(part)?;
             let entry = dir.get_entry(name).ok_or(Error::NodeNotFound)?;
 
             let filetype = entry.filetype();
-            if filetype == FileType::Symlink {
-                curr_node = self.resolve_symlink(entry.node_index(), curr_node)?;
-            } else {
-                curr_node = entry.node_index();
+            curr_node = match filetype {
+                FileType::Symlink => self.resolve_symlink(entry.node_index(), curr_node)?,
+                _ => entry.node_index(),
             }
         }
         Ok(curr_node)
@@ -491,6 +497,7 @@ pub enum Error {
     IsDir,
     CorruptedDir,
     DirNotEmpty,
+    FileExists,
 }
 
 impl From<directory::Error> for Error {
