@@ -184,6 +184,7 @@ pub enum FileType {
     #[default]
     File,
     Dir,
+    Symlink,
 }
 
 /// Represents a contiguous span of physical blocks.

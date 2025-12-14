@@ -329,7 +329,7 @@ impl<'a> Transaction<'a> {
         let name = DirEntryName::try_from(name).map_err(Error::Dir)?;
 
         let mut dir = self.read_directory(parent_index)?;
-        let entry = dir.get_entry(name).ok_or(Error::FileNotFound)?;
+        let entry = dir.get_entry(name).ok_or(Error::NodeNotFound)?;
         if entry.filetype() != FileType::File {
             return Err(Error::FileTypeNotLinkable);
         }
@@ -365,13 +365,39 @@ impl<'a> Transaction<'a> {
         Ok(())
     }
 
-    // NOTE: Only works with the root directory for now.
-    /// Resolves a filename to a node index.
-    pub fn lookup(&self, name: &str) -> Result<usize> {
-        let name = DirEntryName::try_from(name).map_err(Error::Dir)?;
-        let dir = self.read_directory(ROOT_INDEX)?;
-        let entry = dir.get_entry(name).ok_or(Error::FileNotFound)?;
-        Ok(entry.node_index())
+    /// Returns the node index to which `symlink` points to.
+    pub fn resolve_symlink(&self, symlink: usize, parent: usize) -> Result<usize> {
+        todo!()
+    }
+
+    /// Finds a node at `path` with `curr_dir` as parent (if `path` is relative).
+    pub fn find_node(&self, path: &str, curr_dir: usize) -> Result<usize> {
+        let is_absolute = path.starts_with('/');
+        let parent = if is_absolute { ROOT_INDEX } else { curr_dir };
+        let mut curr_node = parent;
+
+        let mut tokens = path.split('/').filter(|t| !t.is_empty()).peekable();
+
+        while let Some(token) = tokens.next() {
+            let dir = self.read_directory(curr_node)?;
+            let name = DirEntryName::try_from(token)?;
+            let entry = dir.get_entry(name).ok_or(Error::NodeNotFound)?;
+
+            let filetype = entry.filetype();
+            if filetype == FileType::Symlink {
+                curr_node = self.resolve_symlink(entry.node_index(), curr_node)?;
+            } else {
+                curr_node = entry.node_index();
+            }
+
+            if tokens.peek().is_some() {
+                let node = self.read_node(curr_node)?;
+                if node.filetype() != FileType::Dir {
+                    return Err(Error::NotDir);
+                }
+            }
+        }
+        Ok(curr_node)
     }
 
     // Internal implementation of 'read_block'.
@@ -431,9 +457,10 @@ pub enum Error {
     Alloc(alloc_map::Error),
     Dir(directory::Error),
     Node(node::Error),
-    FileNotFound,
+    NodeNotFound,
     FileTypeNotLinkable,
     FileTypeNotTruncateable,
+    NotDir,
 }
 
 impl From<directory::Error> for Error {
