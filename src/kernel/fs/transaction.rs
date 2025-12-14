@@ -266,11 +266,15 @@ impl<'a> Transaction<'a> {
     ) -> Result<usize> {
         let name = DirEntryName::try_from(name).map_err(Error::Dir)?;
 
+        let mut parent = self.read_directory(parent_index)?;
+        if parent.get_entry(name).is_some() {
+            return Err(Error::FileExists);
+        }
+
         let (mut node, node_index) = self.create_node(filetype)?;
         node.link_count += 1;
 
         let entry = DirEntry::new(node_index, filetype, name);
-        let mut parent = self.read_directory(parent_index)?;
         parent.add_entry(entry);
 
         self.write_directory(parent_index, &parent)?;
