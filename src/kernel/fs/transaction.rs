@@ -387,7 +387,7 @@ impl<'a> Transaction<'a> {
         &mut self,
         parent_ptr: NodePtr,
         name: &str,
-        target: Path,
+        target: &Path,
     ) -> Result<NodePtr> {
         let node_ptr = self.create_file(parent_ptr, name, FileType::Symlink)?;
         self.write_file_at(node_ptr, 0, target.as_bytes())?;

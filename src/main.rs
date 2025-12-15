@@ -146,6 +146,13 @@ fn main() {
                     println!("Usage: unlink <path>");
                 }
             }
+            "symlink" => {
+                if args.len() >= 2 {
+                    println!("{:?}", kernel.symlink(args[0], args[1]));
+                } else {
+                    println!("Usage: symlink <target> <path>");
+                }
+            }
             "truncate" => {
                 if args.len() >= 2 {
                     let path = args[0];
@@ -203,6 +210,7 @@ fn main() {
                     ("seek <fd> <offset>", "seek to offset"),
                     ("link <old> <new>", "create hard link"),
                     ("unlink <path>", "remove file/link"),
+                    ("symlink <target> <path>", "create symbolic link"),
                     ("truncate <path> <size>", "resize file"),
                     ("stat <path>", "display file stats"),
                     ("ls [path]", "list directory"),

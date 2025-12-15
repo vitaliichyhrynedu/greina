@@ -140,6 +140,21 @@ impl Kernel {
         Ok(())
     }
 
+    /// Creates a symbolic link to `target` at `path`.
+    pub fn symlink(&mut self, target: &str, path: &str) -> Result<()> {
+        let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
+        let mut tx = Transaction::new(fs, &mut self.storage);
+
+        let path = Path::new(path);
+        let (parent, name) = path.split_last().ok_or(Error::NotPermitted)?;
+        let parent = tx.path_node(&parent, self.curr_dir_ptr)?;
+
+        let target = Path::new(target);
+        tx.create_symlink(parent, &name, &target)?;
+        tx.commit();
+        Ok(())
+    }
+
     /// Truncates the file at `path` to be truncated to a size of `size` bytes.
     pub fn truncate(&mut self, path: &str, size: usize) -> Result<()> {
         let fs = self.fs.as_mut().ok_or(Error::FilesystemNotMounted)?;
