@@ -125,10 +125,9 @@ impl Kernel {
         let mut tx = Transaction::new(fs, &mut self.storage);
 
         let path = Path::new(path);
-        let node_ptr = tx.path_node(&path, self.curr_dir_ptr)?;
-
         let (parent, name) = path.split_last().ok_or(Error::NotPermitted)?;
         let parent = tx.path_node(&parent, self.curr_dir_ptr)?;
+        let node_ptr = tx.find_entry(parent, &name)?.node_ptr();
 
         let is_opened = self
             .open_files
