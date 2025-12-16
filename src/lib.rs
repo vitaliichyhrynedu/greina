@@ -1,2 +1,2 @@
-pub mod hardware;
-pub mod kernel;
+pub mod block;
+pub mod fs;
