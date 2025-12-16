@@ -2,8 +2,8 @@ use super::{alloc_map::AllocFlag, node::Node};
 use crate::hardware::storage::block::{BLOCK_SIZE, Block};
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
-/// A magic number to identify the filesystem.
-pub const MAGIC: usize = 0xF5F5_F5F5;
+/// Filesystem signature.
+pub const SIGNATURE: &[u8; 8] = b"greinafs";
 
 /// Superblock id.
 pub const SUPER_ID: usize = 0;
@@ -12,7 +12,7 @@ pub const SUPER_ID: usize = 0;
 #[repr(C)]
 #[derive(FromBytes, IntoBytes, Immutable)]
 pub struct Superblock {
-    pub magic: usize,
+    pub signature: [u8; 8],
     pub block_count: usize,
     pub node_count: usize,
     pub block_map_start: usize,
@@ -40,7 +40,7 @@ impl Superblock {
         let data_start = node_table_start + node_table_blocks;
 
         Self {
-            magic: MAGIC,
+            signature: *SIGNATURE,
             block_count,
             node_count,
             block_map_start,

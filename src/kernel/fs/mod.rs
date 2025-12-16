@@ -89,8 +89,8 @@ impl Filesystem {
         let superblock = Superblock::read_from_bytes(&bytes[0..size_of::<Superblock>()])
             .expect("'bytes' must be a valid 'Superblock'");
 
-        // Verify magic
-        if superblock.magic != superblock::MAGIC {
+        // Verify signature
+        if superblock.signature != *superblock::SIGNATURE {
             return None;
         }
 
