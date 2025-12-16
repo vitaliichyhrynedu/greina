@@ -91,6 +91,7 @@ impl Node {
         None
     }
 
+    // TODO: This needs some work. Current implementation leads to fragmentation.
     /// Maps the block at `block offset` within the file to `addr`.
     pub fn map_block(&mut self, mut block_offset: u64, addr: BlockAddr) -> Result<()> {
         assert!(addr != 0);
