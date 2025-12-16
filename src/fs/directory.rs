@@ -1,6 +1,6 @@
 use zerocopy::{FromBytes, Immutable, IntoBytes, TryFromBytes};
 
-use crate::kernel::fs::node::{FileType, NodePtr};
+use crate::fs::node::{FileType, NodePtr};
 
 /// Tracks entries within a directory.
 pub struct Dir {
@@ -77,7 +77,7 @@ pub struct DirEntry {
 }
 
 impl DirEntry {
-    /// Constructs a directory entry with given node pointer, file type and name.
+    /// Constructs a directory entry with a given node pointer, file type and name.
     pub fn new(node_ptr: NodePtr, filetype: FileType, name: DirEntryName) -> Self {
         Self {
             node_ptr,
@@ -87,7 +87,7 @@ impl DirEntry {
         }
     }
 
-    /// Constructs a `.` directory entry with given node pointer.
+    /// Constructs a `.` directory entry with a given node pointer.
     pub fn itself(node_ptr: NodePtr) -> Self {
         Self::new(
             node_ptr,
@@ -96,7 +96,7 @@ impl DirEntry {
         )
     }
 
-    /// Constructs a `..` directory entry with given node pointer.
+    /// Constructs a `..` directory entry with a given node pointer.
     pub fn parent(node_ptr: NodePtr) -> Self {
         Self::new(
             node_ptr,

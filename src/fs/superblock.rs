@@ -1,39 +1,39 @@
 use super::{alloc_map::AllocFlag, node::Node};
-use crate::hardware::storage::block::{BLOCK_SIZE, Block};
+use crate::block::{BLOCK_SIZE, Block, BlockAddr};
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 /// Filesystem signature.
 pub const SIGNATURE: &[u8; 8] = b"greinafs";
 
-/// Superblock id.
-pub const SUPER_ID: usize = 0;
+/// Superblock's address.
+pub const SUPER_ADDR: BlockAddr = 0;
 
 /// Represents metadata about the file system.
 #[repr(C)]
 #[derive(FromBytes, IntoBytes, Immutable)]
 pub struct Superblock {
     pub signature: [u8; 8],
-    pub block_count: usize,
-    pub node_count: usize,
-    pub block_map_start: usize,
-    pub node_map_start: usize,
-    pub node_table_start: usize,
-    pub data_start: usize,
+    pub block_count: u64,
+    pub node_count: u64,
+    pub block_map_start: BlockAddr,
+    pub node_map_start: BlockAddr,
+    pub node_table_start: BlockAddr,
+    pub data_start: BlockAddr,
 }
 
 impl Superblock {
     /// Constructs a superblock with given block and node count.
-    pub fn new(block_count: usize, node_count: usize) -> Self {
-        let block_map_bytes = block_count * (size_of::<AllocFlag>());
+    pub fn new(block_count: u64, node_count: u64) -> Self {
+        let block_map_bytes = block_count * (size_of::<AllocFlag>()) as u64;
         let block_map_blocks = block_map_bytes.div_ceil(BLOCK_SIZE);
 
-        let node_map_bytes = node_count * (size_of::<AllocFlag>());
+        let node_map_bytes = node_count * (size_of::<AllocFlag>()) as u64;
         let node_map_blocks = node_map_bytes.div_ceil(BLOCK_SIZE);
 
-        let node_table_bytes = node_count * (size_of::<Node>());
+        let node_table_bytes = node_count * (size_of::<Node>()) as u64;
         let node_table_blocks = node_table_bytes.div_ceil(BLOCK_SIZE);
 
-        // Superblock lives in the 0th block
+        // Superblock lives at address 0
         let block_map_start = 1;
         let node_map_start = block_map_start + block_map_blocks;
         let node_table_start = node_map_start + node_map_blocks;

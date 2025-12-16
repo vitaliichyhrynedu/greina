@@ -1,22 +1,13 @@
 use zerocopy::{FromBytes, Immutable, IntoBytes, TryFromBytes};
 
-use crate::hardware::storage::block::BLOCK_SIZE;
-
-/// [Node] size.
-pub const NODE_SIZE: usize = size_of::<Node>();
-
-/// How many nodes fit in a block.
-pub const NODES_PER_BLOCK: usize = BLOCK_SIZE / NODE_SIZE;
-
-/// How many extents a [Node] can have.
-const EXTENTS_PER_NODE: usize = 15;
+use crate::block::{BLOCK_SIZE, BlockAddr};
 
 /// A pointer to a node.
 #[repr(C)]
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 #[derive(FromBytes, IntoBytes, Immutable)]
 pub struct NodePtr {
-    id: usize,
+    id: u64,
 }
 
 impl NodePtr {
@@ -26,12 +17,12 @@ impl NodePtr {
     }
 
     /// Constructs a pointer from a node id.
-    pub fn new(id: usize) -> Self {
+    pub fn new(id: u64) -> Self {
         Self { id }
     }
 
     /// Returns the id of the node.
-    pub fn id(&self) -> usize {
+    pub fn id(&self) -> u64 {
         self.id
     }
 
@@ -41,12 +32,18 @@ impl NodePtr {
     }
 }
 
+/// Node's size.
+pub const NODE_SIZE: usize = size_of::<Node>();
+
+/// How many extents a node can have.
+const EXTENTS_PER_NODE: usize = 15;
+
 /// Represents a file system object.
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 #[derive(TryFromBytes, IntoBytes, Immutable)]
 pub struct Node {
-    pub size: usize,
+    pub size: u64,
     pub link_count: u32,
     filetype: FileType,
     _pad: [u8; 3],
@@ -54,7 +51,7 @@ pub struct Node {
 }
 
 impl Node {
-    /// Constructs a [Node] of the given filetype.
+    /// Constructs a `Node` of a given filetype.
     pub fn new(filetype: FileType) -> Self {
         Self {
             filetype,
@@ -62,7 +59,7 @@ impl Node {
         }
     }
 
-    /// Returns the filetype of the node.
+    /// Returns node's file type.
     pub fn filetype(&self) -> FileType {
         self.filetype
     }
@@ -77,8 +74,19 @@ impl Node {
         &mut self.extents
     }
 
-    /// Resolves `block offset` within the file into a block id.
-    pub fn get_block_id(&self, mut block_offset: usize) -> Option<usize> {
+    /// Converts byte `offset` into a block offset.
+    pub const fn get_block_offset_from_offset(offset: u64) -> u64 {
+        offset as u64 / BLOCK_SIZE
+    }
+
+    /// Resolves byte `offset` into a block address.
+    pub fn get_block_addr_from_offset(&self, offset: u64) -> Option<BlockAddr> {
+        let block_offset = Self::get_block_offset_from_offset(offset);
+        self.get_block_addr(block_offset)
+    }
+
+    /// Resolves `block offset` within the file into a block address.
+    pub fn get_block_addr(&self, mut block_offset: u64) -> Option<BlockAddr> {
         for extent in self.extents.iter().take_while(|e| !e.is_null()) {
             let extent_len = extent.len();
             if extent_len > block_offset {
@@ -93,19 +101,8 @@ impl Node {
         None
     }
 
-    /// Resolves byte `offset` into a block id.
-    pub fn get_block_id_from_offset(&self, offset: usize) -> Option<usize> {
-        let block_offset = Self::get_block_offset_from_offset(offset);
-        self.get_block_id(block_offset)
-    }
-
-    /// Converts byte `offset` into a block offset.
-    pub const fn get_block_offset_from_offset(offset: usize) -> usize {
-        offset / BLOCK_SIZE
-    }
-
     /// Returns the number of blocks that belong to the node.
-    pub fn block_count(&self) -> usize {
+    pub fn block_count(&self) -> u64 {
         self.extents
             .iter()
             .filter(|e| !e.is_null() && !e.is_hole())
@@ -113,9 +110,9 @@ impl Node {
             .sum()
     }
 
-    /// Maps the block at `block offset` within the file to `block id`.
-    pub fn map_block(&mut self, mut block_offset: usize, block_id: usize) -> Result<()> {
-        assert!(block_id != 0);
+    /// Maps the block at `block offset` within the file to `addr`.
+    pub fn map_block(&mut self, mut block_offset: u64, addr: BlockAddr) -> Result<()> {
+        assert!(addr != 0);
         for curr in 0..self.extents.len() {
             if self.extents[curr].is_null() {
                 // All allocated extents were passed or there was none
@@ -123,7 +120,7 @@ impl Node {
                     // There is a previous extent
                     let prev = curr - 1;
                     let is_hole = self.extents[prev].is_hole();
-                    let contiguous = block_offset == 0 && self.extents[prev].end == block_id;
+                    let contiguous = block_offset == 0 && self.extents[prev].end == addr;
                     if !is_hole && contiguous {
                         // Can merge with the previous extent
                         self.extents[prev].end += 1;
@@ -131,8 +128,8 @@ impl Node {
                     }
                 }
                 if block_offset == 0 {
-                    self.extents[curr].start = block_id;
-                    self.extents[curr].end = block_id + 1;
+                    self.extents[curr].start = addr;
+                    self.extents[curr].end = addr + 1;
                 } else {
                     let next = curr + 1;
                     if next >= self.extents.len() {
@@ -140,8 +137,8 @@ impl Node {
                     }
                     // Make the current extent a hole and map the next one
                     self.extents[curr].end = block_offset;
-                    self.extents[next].start = block_id;
-                    self.extents[next].end = block_id + 1;
+                    self.extents[next].start = addr;
+                    self.extents[next].end = addr + 1;
                 }
                 return Ok(());
             }
@@ -157,8 +154,8 @@ impl Node {
                 // Split the hole into three extents:
                 let mut exts = [Extent::default(); 3];
                 exts[0].end = block_offset; // Left hole
-                exts[1].start = block_id;
-                exts[1].end = block_id + 1;
+                exts[1].start = addr;
+                exts[1].end = addr + 1;
                 exts[2].end = blocks_in_curr - block_offset - 1; // Right hole
                 // Remove empty hole, if there is one
                 // (i.e. the first/last block of the hole is mapped)
@@ -181,7 +178,7 @@ impl Node {
     }
 
     /// Appends a sparse region of 'count' blocks to the end of node's extents.
-    pub fn append_hole(&mut self, count: usize) -> Result<()> {
+    pub fn append_hole(&mut self, count: u64) -> Result<()> {
         assert!(count != 0);
         for i in 0..self.extents.len() {
             if self.extents[i].is_null() {
@@ -218,18 +215,18 @@ pub enum FileType {
 #[derive(Default, Clone, Copy)]
 #[derive(FromBytes, IntoBytes, Immutable)]
 pub struct Extent {
-    start: usize,
-    end: usize,
+    start: BlockAddr,
+    end: BlockAddr,
 }
 
 impl Extent {
-    /// Returns the block that marks the start of the extent.
-    pub fn start(&self) -> usize {
+    /// Returns the block address that marks the start of the extent.
+    pub fn start(&self) -> BlockAddr {
         self.start
     }
 
-    /// Returns the block that marks the end (exclusive) of the extent.
-    pub fn end(&self) -> usize {
+    /// Returns the block address that marks the end of the extent.
+    pub fn end(&self) -> BlockAddr {
         self.end
     }
 
@@ -238,7 +235,7 @@ impl Extent {
         self.start == 0 && self.end == 0
     }
 
-    /// Checks whether the extent represents a sparse region.
+    /// Checks whether the extent represents a hole (sparse region).
     pub fn is_hole(&self) -> bool {
         self.start == 0 && self.end > 0
     }
@@ -249,23 +246,23 @@ impl Extent {
         self.end = 0;
     }
 
-    /// Shrinks the extent to `len`.
-    pub fn shrink(&mut self, len: usize) {
-        self.end = len;
+    /// Shrinks the extent by `count` blocks.
+    pub fn shrink(&mut self, count: u64) {
+        self.end -= count;
     }
 
-    /// Returns the number of blocks in this extent.
-    pub fn len(&self) -> usize {
+    /// Returns the number of blocks this extent covers.
+    pub fn len(&self) -> u64 {
         self.end - self.start
     }
 
     /// Represesnts itself as a (start, end) span.
-    pub fn span(&self) -> (usize, usize) {
+    pub fn span(&self) -> (u64, u64) {
         (self.start, self.end)
     }
 }
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {

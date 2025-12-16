@@ -1,14 +1,16 @@
+use libc::EINVAL;
 use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
 
 use crate::{
-    hardware::storage::{Storage, block::Block},
-    kernel::fs::{
+    block::{Block, BlockAddr},
+    fs::{
         alloc_map::{AllocFlag, AllocMap},
         directory::Dir,
         node::{FileType, NodePtr},
         superblock::Superblock,
-        transaction::Transaction,
+        transaction::{IntoTransactionResult, Transaction},
     },
+    storage::{self, Storage},
 };
 
 pub mod alloc_map;
@@ -19,18 +21,21 @@ pub mod superblock;
 pub mod transaction;
 
 /// An in-memory view of the filesystem.
-pub struct Filesystem {
+pub struct Filesystem<S: Storage> {
+    storage: S,
     superblock: Superblock,
     block_map: AllocMap,
     node_map: AllocMap,
 }
 
-impl Filesystem {
+impl<S: Storage> Filesystem<S> {
     /// Formats the persistent storage with a filesystem.
     ///
     /// # Panics
     /// ...
-    pub fn format(storage: &mut Storage, block_count: usize, node_count: usize) -> Self {
+    pub fn format(mut storage: S, node_count: u64) -> transaction::Result<Self> {
+        let block_count = storage.block_count().into_transaction_res()?;
+
         // Superblock
         let superblock = Superblock::new(block_count, node_count);
 
@@ -50,6 +55,7 @@ impl Filesystem {
 
         // Create filesystem
         let mut fs = Filesystem {
+            storage,
             superblock,
             block_map,
             node_map,
@@ -58,8 +64,8 @@ impl Filesystem {
         {
             // Write superblock
             let superblock = Block::from(&fs.superblock);
-            let mut tx = Transaction::new(&mut fs, storage);
-            tx.write_block(superblock::SUPER_ID, &superblock);
+            let mut tx = Transaction::new(&mut fs);
+            tx.write_block_at(&superblock, superblock::SUPER_ADDR);
 
             // Initialize the root directory
             let (_, root_id) = tx
@@ -70,61 +76,68 @@ impl Filesystem {
             tx.write_directory(root_id, &root)
                 .expect("Must be able to write the root directory");
 
-            tx.commit();
+            tx.commit()?;
         }
 
-        fs
+        Ok(fs)
     }
 
     /// Mounts the filesystem from the persistent storage.
     ///
     /// # Panics
     /// ...
-    pub fn mount(storage: &Storage) -> Option<Self> {
+    pub fn mount(mut storage: S) -> storage::Result<Self> {
         // Read the superblock
-        let blocks = storage
-            .read_block(0)
+        let mut block = Block::default();
+        storage
+            .read_block_at(&mut block, 0)
             .expect("Must be able to read the superblock");
-        let bytes = blocks.as_bytes();
-        let superblock = Superblock::read_from_bytes(&bytes[0..size_of::<Superblock>()])
-            .expect("'bytes' must be a valid 'Superblock'");
+        let superblock = Superblock::read_from_bytes(&block.data)
+            .expect("'block.data' must be a valid 'Superblock'");
 
         // Verify signature
         if superblock.signature != *superblock::SIGNATURE {
-            return None;
+            return Err(EINVAL);
         }
 
         // Read the block allocation map
         let block_map = Self::read_map(
-            storage,
+            &mut storage,
             superblock.block_map_start,
             superblock.node_map_start,
             superblock.block_count,
-        );
+        )?;
 
         // Read the node allocation map
         let node_map = Self::read_map(
-            storage,
+            &mut storage,
             superblock.node_map_start,
             superblock.node_table_start,
             superblock.node_count,
-        );
+        )?;
 
-        Some(Self {
+        Ok(Self {
+            storage,
             superblock,
             block_map,
             node_map,
         })
     }
 
-    fn read_map(storage: &Storage, map_start: usize, map_end: usize, count: usize) -> AllocMap {
-        let block_ids: Vec<usize> = (map_start..map_end).collect();
-        let blocks = storage
-            .read_blocks(&block_ids)
-            .expect("Must be able to read the allocation map");
+    fn read_map(
+        storage: &mut S,
+        map_start: BlockAddr,
+        map_end: BlockAddr,
+        count: u64,
+    ) -> storage::Result<AllocMap> {
+        let addrs: Vec<BlockAddr> = (map_start..map_end).collect();
+        let mut blocks = vec![Block::default(); addrs.len()];
+        for (i, &addr) in addrs.iter().enumerate() {
+            storage.read_block_at(&mut blocks[i], addr)?
+        }
         let bytes = blocks.as_bytes();
         let flags = <[AllocFlag]>::try_ref_from_bytes(bytes)
             .expect("'bytes' must be a valid '<[AllocFlag]>'");
-        AllocMap::from_slice(&flags[..count])
+        Ok(AllocMap::from_slice(&flags[..count as usize]))
     }
 }
