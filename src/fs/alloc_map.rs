@@ -74,12 +74,26 @@ impl AllocMap {
         Ok(())
     }
 
+    /// Marks the object at `id` as free.
+    ///
+    /// # Panics
+    /// Panics if:
+    /// - `span` is not a valid span
+    pub fn free_at(&mut self, id: u64) -> Result<()> {
+        let span = self
+            .flags
+            .get_mut(id as usize)
+            .ok_or(Error::IdOutOfBounds)?;
+        *span = AllocFlag::Free;
+        Ok(())
+    }
+
     /// Marks the span of objects as free.
     ///
     /// # Panics
     /// Panics if:
     /// - `span` is not a valid span
-    pub fn free(&mut self, id_span: (u64, u64)) -> Result<()> {
+    pub fn free_span(&mut self, id_span: (u64, u64)) -> Result<()> {
         assert!(id_span.0 <= id_span.1);
         let span = self
             .flags

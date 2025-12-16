@@ -130,12 +130,12 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let spans = node.truncate(0);
         for span in spans {
             // Free the blocks
-            self.fs.block_map.free(span).map_err(Error::Alloc)?;
+            self.fs.block_map.free_span(span).map_err(Error::Alloc)?;
         }
 
         // Free the node
         let id = node_ptr.id();
-        self.fs.node_map.free((id, id + 1)).map_err(Error::Alloc)?;
+        self.fs.node_map.free_at(id).map_err(Error::Alloc)?;
 
         let node = Node::default();
         self.write_node(&node, node_ptr)?;
@@ -272,7 +272,7 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let spans = node.truncate(size);
         for span in spans {
             // Free the blocks, if shrinked
-            self.fs.block_map.free(span).map_err(Error::Alloc)?;
+            self.fs.block_map.free_span(span).map_err(Error::Alloc)?;
         }
 
         self.write_node(&node, node_ptr)?;
