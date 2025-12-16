@@ -82,7 +82,7 @@ pub struct Node {
 impl Node {
     /// Constructs a `Node` of a given filetype.
     pub fn new(filetype: FileType, perms: u16, uid: u32, gid: u32) -> Self {
-        let now = NodeTime::from(SystemTime::now());
+        let now = NodeTime::now();
         Self {
             file_type: filetype,
             perms,
@@ -286,6 +286,12 @@ pub struct NodeTime {
     secs: u64,
     nanos: u32,
     _pad: [u8; 4],
+}
+
+impl NodeTime {
+    pub fn now() -> Self {
+        Self::from(SystemTime::now())
+    }
 }
 
 impl From<SystemTime> for NodeTime {

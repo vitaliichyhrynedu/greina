@@ -9,7 +9,7 @@ use crate::{
         Filesystem,
         alloc_map::{self, AllocMap},
         dir::{self, Dir, DirEntry, DirEntryName},
-        node::{self, FileType, NODE_SIZE, Node, NodePtr},
+        node::{self, FileType, NODE_SIZE, Node, NodePtr, NodeTime},
         path::{self, Path},
     },
     storage::{self, Storage},
@@ -96,29 +96,38 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let addr = self
             .get_node_block_addr(node_ptr)
             .ok_or(Error::NodePtrOutOfBounds)?;
+
         let mut block = Block::default();
         self.read_block_at(&mut block, addr)?;
         let offset = self
             .get_node_offset(node_ptr)
             .ok_or(Error::NodePtrOutOfBounds)?;
-        Ok(
+
+        let node =
             Node::try_read_from_bytes(&block.data[offset as usize..(offset as usize + NODE_SIZE)])
-                .expect("'bytes' must be a valid 'Node'"),
-        )
+                .expect("'block.data' must hold a valid 'Node'");
+
+        Ok(node)
     }
 
     // Queues a write of the node to the node table.
-    pub fn write_node(&mut self, node: &Node, node_ptr: NodePtr) -> Result<()> {
+    pub fn write_node(&mut self, node: &mut Node, node_ptr: NodePtr) -> Result<()> {
+        node.change_time = NodeTime::now();
+
         let addr = self
             .get_node_block_addr(node_ptr)
             .ok_or(Error::NodePtrOutOfBounds)?;
+
         let mut block = Block::default();
         self.read_block_at(&mut block, addr)?;
+
         let offset = self
             .get_node_offset(node_ptr)
             .ok_or(Error::NodePtrOutOfBounds)?;
         block.data[offset as usize..(offset as usize + NODE_SIZE)].copy_from_slice(node.as_bytes());
+
         self.write_block_at(&block, addr);
+
         Ok(())
     }
 
@@ -130,10 +139,10 @@ impl<'a, S: Storage> Transaction<'a, S> {
         uid: u32,
         gid: u32,
     ) -> Result<(Node, NodePtr)> {
-        let node = Node::new(file_type, perms, uid, gid);
+        let mut node = Node::new(file_type, perms, uid, gid);
         let (id, _) = self.node_map.allocate(1).map_err(Error::Alloc)?;
         let node_ptr = NodePtr::new(id);
-        self.write_node(&node, node_ptr)?;
+        self.write_node(&mut node, node_ptr)?;
         Ok((node, node_ptr))
     }
 
@@ -151,16 +160,16 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let id = node_ptr.id();
         self.node_map.free_at(id).map_err(Error::Alloc)?;
 
-        let node = Node::default();
-        self.write_node(&node, node_ptr)?;
+        let mut node = Node::default();
+        self.write_node(&mut node, node_ptr)?;
 
         Ok(())
     }
 
     /// Reads a number of bytes from the file into `buf` starting from `offset`.
     /// Returns the number of bytes read.
-    pub fn read_file_at(&self, node_ptr: NodePtr, offset: u64, buf: &mut [u8]) -> Result<u64> {
-        let node = self.read_node(node_ptr)?;
+    pub fn read_file_at(&mut self, node_ptr: NodePtr, offset: u64, buf: &mut [u8]) -> Result<u64> {
+        let mut node = self.read_node(node_ptr)?;
 
         if offset >= node.size {
             return Ok(0);
@@ -191,6 +200,9 @@ impl<'a, S: Storage> Transaction<'a, S> {
             bytes_read += chunk_size;
         }
 
+        node.access_time = NodeTime::now();
+        self.write_node(&mut node, node_ptr)?;
+
         Ok(bytes_read)
     }
 
@@ -201,7 +213,6 @@ impl<'a, S: Storage> Transaction<'a, S> {
 
         let bytes_to_write = buf.len() as u64;
         let mut bytes_written = 0;
-        let mut node_updated = false;
 
         while bytes_written != bytes_to_write {
             let curr_pos = offset + bytes_written;
@@ -214,7 +225,6 @@ impl<'a, S: Storage> Transaction<'a, S> {
                     // Allocate a block
                     let (addr, _) = self.block_map.allocate(1).map_err(Error::Alloc)?;
                     node.map_block(block_offset, addr).map_err(Error::Node)?;
-                    node_updated = true;
                     (addr, true)
                 }
             };
@@ -238,12 +248,10 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let end_pos = offset + bytes_written;
         if end_pos > node.size {
             node.size = end_pos;
-            node_updated = true;
         }
 
-        if node_updated {
-            self.write_node(&node, node_ptr)?;
-        }
+        node.mod_time = NodeTime::now();
+        self.write_node(&mut node, node_ptr)?;
 
         Ok(bytes_written)
     }
@@ -268,7 +276,7 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let entry = DirEntry::new(node_ptr, file_type, name);
         parent.add_entry(entry)?;
 
-        self.write_node(&node, node_ptr)?;
+        self.write_node(&mut node, node_ptr)?;
         self.write_dir(parent_ptr, &parent)?;
 
         Ok(node_ptr)
@@ -287,12 +295,13 @@ impl<'a, S: Storage> Transaction<'a, S> {
             self.block_map.free_span(span).map_err(Error::Alloc)?;
         }
 
-        self.write_node(&node, node_ptr)?;
+        node.mod_time = NodeTime::now();
+        self.write_node(&mut node, node_ptr)?;
         Ok(())
     }
 
     /// Reads the directory.
-    pub fn read_dir(&self, node_ptr: NodePtr) -> Result<Dir> {
+    pub fn read_dir(&mut self, node_ptr: NodePtr) -> Result<Dir> {
         let node = self.read_node(node_ptr)?;
         if node.file_type != FileType::Dir {
             return Err(Error::NotDir);
@@ -349,7 +358,7 @@ impl<'a, S: Storage> Transaction<'a, S> {
     }
 
     /// Finds the entry named `name` inside `parent_ptr`.
-    pub fn find_entry(&self, parent_ptr: NodePtr, name: &str) -> Result<DirEntry> {
+    pub fn find_entry(&mut self, parent_ptr: NodePtr, name: &str) -> Result<DirEntry> {
         let name = DirEntryName::try_from(name)?;
         let parent = self.read_dir(parent_ptr)?;
         parent.get_entry(name).ok_or(Error::NodeNotFound).copied()
@@ -401,7 +410,7 @@ impl<'a, S: Storage> Transaction<'a, S> {
 
     /// Checks if `ancestor_ptr` is an ancestor directory of `dir_ptr` directory.
     /// Ancestry is reflexive, i.e. a directory is its own ancestor.
-    fn is_ancestor_dir(&self, ancestor_ptr: NodePtr, dir_ptr: NodePtr) -> Result<bool> {
+    fn is_ancestor_dir(&mut self, ancestor_ptr: NodePtr, dir_ptr: NodePtr) -> Result<bool> {
         let root = NodePtr::root();
         let mut curr_parent_ptr = dir_ptr;
         loop {
@@ -429,7 +438,7 @@ impl<'a, S: Storage> Transaction<'a, S> {
         parent.add_entry(entry)?;
         node.links += 1;
 
-        self.write_node(&node, node_ptr)?;
+        self.write_node(&mut node, node_ptr)?;
         self.write_dir(parent_ptr, &parent)?;
 
         Ok(())
@@ -454,14 +463,14 @@ impl<'a, S: Storage> Transaction<'a, S> {
         if node.links == 0 && free {
             self.remove_node(node_ptr)?;
         } else {
-            self.write_node(&node, node_ptr)?;
+            self.write_node(&mut node, node_ptr)?;
         }
 
         Ok(())
     }
 
     /// Returns the path contained inside `symlink_ptr`.
-    pub fn read_symlink(&self, symlink_ptr: NodePtr) -> Result<Path<'_>> {
+    pub fn read_symlink(&mut self, symlink_ptr: NodePtr) -> Result<Path<'static>> {
         let node = self.read_node(symlink_ptr)?;
         if node.file_type != FileType::Symlink {
             return Err(Error::NotSymlink);
@@ -487,13 +496,18 @@ impl<'a, S: Storage> Transaction<'a, S> {
     }
 
     /// Finds the node at `path`, using `start_node_ptr` as the start if `path` is relative.
-    pub fn path_node(&self, path: &Path, start_node_ptr: NodePtr) -> Result<NodePtr> {
+    pub fn path_node(&mut self, path: &Path, start_node_ptr: NodePtr) -> Result<NodePtr> {
         self._path_node(path, start_node_ptr, 0)
     }
 
     /// Internal implementation of the `path_node` function.
     /// `depth` describes how deep into the recursive call chain the function is.
-    fn _path_node(&self, path: &Path, start_node_ptr: NodePtr, depth: usize) -> Result<NodePtr> {
+    fn _path_node(
+        &mut self,
+        path: &Path,
+        start_node_ptr: NodePtr,
+        depth: usize,
+    ) -> Result<NodePtr> {
         const MAX_DEPTH: usize = 16;
         if depth >= MAX_DEPTH {
             return Err(Error::TooManySymlinks);
