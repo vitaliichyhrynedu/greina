@@ -4,6 +4,7 @@ use crate::fs::node::{FileType, NodePtr};
 
 /// Tracks entries within a directory.
 pub struct Dir {
+    // TODO: Parse directories lazily
     entries: Vec<DirEntry>,
 }
 
