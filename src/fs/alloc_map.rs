@@ -115,6 +115,12 @@ impl AllocMap {
             flags: Box::from(flags),
         }
     }
+
+    // TODO: Store this information instead?
+    /// Returns the number of free objects in the map.
+    pub fn count_free(&self) -> u64 {
+        self.flags.iter().filter(|f| **f == AllocFlag::Free).count() as u64
+    }
 }
 
 /// Represents allocation state of an object.
