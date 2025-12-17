@@ -256,6 +256,15 @@ impl Node {
 
         discarded
     }
+
+    /// Returns the number of blocks belonging to the node.
+    pub fn count_blocks(&self) -> u64 {
+        self.extents
+            .iter()
+            .filter(|e| !e.is_null() && !e.is_hole())
+            .map(|e| e.len())
+            .sum()
+    }
 }
 
 impl Default for Node {
