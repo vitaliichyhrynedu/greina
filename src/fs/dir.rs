@@ -183,7 +183,21 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     EntryNotFound,
-    NameTooLong,
-    CorruptedName,
     EntryExists,
+    NameTooLong,
+
+    // Filesystem corruption or logic error
+    CorruptedName,
+}
+
+impl From<Error> for libc::c_int {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::EntryNotFound => libc::ENOENT,
+            Error::EntryExists => libc::EEXIST,
+            Error::NameTooLong => libc::ENAMETOOLONG,
+
+            Error::CorruptedName => libc::EIO,
+        }
+    }
 }

@@ -68,5 +68,14 @@ impl<'a> Path<'a> {
 
 #[derive(Debug)]
 pub enum Error {
+    // Filesystem corruption
     CorruptedPath,
+}
+
+impl From<Error> for libc::c_int {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::CorruptedPath => libc::EIO,
+        }
+    }
 }

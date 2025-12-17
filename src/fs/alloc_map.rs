@@ -137,7 +137,20 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    IdOutOfBounds,
-    ObjectOccupied,
     OutOfSpace,
+
+    // Filesystem corruption or logic error
+    ObjectOccupied,
+    IdOutOfBounds,
+}
+
+impl From<Error> for libc::c_int {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::OutOfSpace => libc::ENOSPC,
+
+            Error::ObjectOccupied => libc::EIO,
+            Error::IdOutOfBounds => libc::EIO,
+        }
+    }
 }

@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use libc::c_int;
 use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
 
 use crate::{
@@ -140,7 +139,7 @@ impl<'a, S: Storage> Transaction<'a, S> {
         gid: u32,
     ) -> Result<(Node, NodePtr)> {
         let mut node = Node::new(file_type, perms, uid, gid);
-        let (id, _) = self.node_map.allocate(1).map_err(Error::Alloc)?;
+        let (id, _) = self.node_map.allocate(1)?;
         let node_ptr = NodePtr::new(id);
         self.write_node(&mut node, node_ptr)?;
         Ok((node, node_ptr))
@@ -153,12 +152,12 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let spans = node.truncate(0);
         for span in spans {
             // Free the blocks
-            self.block_map.free_span(span).map_err(Error::Alloc)?;
+            self.block_map.free_span(span)?;
         }
 
         // Free the node
         let id = node_ptr.id();
-        self.node_map.free_at(id).map_err(Error::Alloc)?;
+        self.node_map.free_at(id)?;
 
         let mut node = Node::default();
         self.write_node(&mut node, node_ptr)?;
@@ -223,8 +222,8 @@ impl<'a, S: Storage> Transaction<'a, S> {
                 Some(addr) => (addr, false),
                 None => {
                     // Allocate a block
-                    let (addr, _) = self.block_map.allocate(1).map_err(Error::Alloc)?;
-                    node.map_block(block_offset, addr).map_err(Error::Node)?;
+                    let (addr, _) = self.block_map.allocate(1)?;
+                    node.map_block(block_offset, addr)?;
                     (addr, true)
                 }
             };
@@ -285,14 +284,17 @@ impl<'a, S: Storage> Transaction<'a, S> {
     /// Truncates the file's size to `size`.
     pub fn truncate_file(&mut self, node_ptr: NodePtr, size: u64) -> Result<()> {
         let mut node = self.read_node(node_ptr)?;
-        if node.file_type != FileType::File {
-            return Err(Error::NotFile);
+
+        match node.file_type {
+            FileType::File => (),
+            FileType::Dir => return Err(Error::IsDir),
+            _ => return Err(Error::NotFile),
         }
 
         let spans = node.truncate(size);
         for span in spans {
             // Free the blocks, if shrinked
-            self.block_map.free_span(span).map_err(Error::Alloc)?;
+            self.block_map.free_span(span)?;
         }
 
         node.mod_time = NodeTime::now();
@@ -340,7 +342,7 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let name = DirEntryName::try_from(name)?;
         let mut parent = self.read_dir(parent_ptr)?;
 
-        let entry = parent.remove_entry(name).ok_or(Error::NodeNotFound)?;
+        let entry = parent.remove_entry(name).ok_or(Error::EntryNotFound)?;
         if entry.file_type != FileType::Dir {
             return Err(Error::NotDir);
         }
@@ -361,7 +363,7 @@ impl<'a, S: Storage> Transaction<'a, S> {
     pub fn find_entry(&mut self, parent_ptr: NodePtr, name: &str) -> Result<DirEntry> {
         let name = DirEntryName::try_from(name)?;
         let parent = self.read_dir(parent_ptr)?;
-        parent.get_entry(name).ok_or(Error::NodeNotFound).copied()
+        parent.get_entry(name).ok_or(Error::EntryNotFound).copied()
     }
 
     /// Renames the entry named `old_name` to `new_name` and moves it from `old_parent_ptr` to
@@ -374,12 +376,15 @@ impl<'a, S: Storage> Transaction<'a, S> {
         new_name: &str,
     ) -> Result<()> {
         let old_name = DirEntryName::try_from(old_name)?;
+        if old_name == DirEntryName::itself() || old_name == DirEntryName::parent() {
+            return Err(Error::InvalidMove);
+        }
         let new_name = DirEntryName::try_from(new_name)?;
         let mut old_parent = self.read_dir(old_parent_ptr)?;
 
         let mut entry = old_parent
             .remove_entry(old_name)
-            .ok_or(Error::NodeNotFound)?;
+            .ok_or(Error::EntryNotFound)?;
         entry.name = new_name;
 
         if old_parent_ptr == new_parent_ptr {
@@ -450,7 +455,7 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let name = DirEntryName::try_from(name)?;
         let mut parent = self.read_dir(parent_ptr)?;
 
-        let entry = parent.remove_entry(name).ok_or(Error::NodeNotFound)?;
+        let entry = parent.remove_entry(name).ok_or(Error::EntryNotFound)?;
         if entry.file_type == FileType::Dir {
             return Err(Error::IsDir);
         }
@@ -562,33 +567,25 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    Storage(c_int),
-    NodePtrOutOfBounds,
+    Storage(libc::c_int),
+
     Alloc(alloc_map::Error),
     Dir(dir::Error),
     Node(node::Error),
     Path(path::Error),
-    NodeNotFound,
+
+    EntryNotFound,
     NotFile,
-    NotDir,
     IsDir,
-    CorruptedDir,
+    NotDir,
     DirNotEmpty,
+    InvalidMove,
     NotSymlink,
     TooManySymlinks,
-    InvalidMove,
-}
 
-impl From<dir::Error> for Error {
-    fn from(value: dir::Error) -> Self {
-        Self::Dir(value)
-    }
-}
-
-impl From<path::Error> for Error {
-    fn from(value: path::Error) -> Self {
-        Self::Path(value)
-    }
+    // Filesystem corruption or logic error
+    NodePtrOutOfBounds,
+    CorruptedDir,
 }
 
 pub trait IntoTransactionResult {
@@ -604,6 +601,55 @@ impl<T> IntoTransactionResult for storage::Result<T> {
         match self {
             Ok(v) => Ok(v),
             Err(e) => Err(Error::Storage(e)),
+        }
+    }
+}
+
+impl From<alloc_map::Error> for Error {
+    fn from(err: alloc_map::Error) -> Self {
+        Self::Alloc(err)
+    }
+}
+
+impl From<dir::Error> for Error {
+    fn from(err: dir::Error) -> Self {
+        Self::Dir(err)
+    }
+}
+
+impl From<node::Error> for Error {
+    fn from(err: node::Error) -> Self {
+        Self::Node(err)
+    }
+}
+
+impl From<path::Error> for Error {
+    fn from(err: path::Error) -> Self {
+        Self::Path(err)
+    }
+}
+
+impl From<Error> for libc::c_int {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::Storage(errno) => errno,
+
+            Error::Alloc(e) => e.into(),
+            Error::Dir(e) => e.into(),
+            Error::Node(e) => e.into(),
+            Error::Path(e) => e.into(),
+
+            Error::EntryNotFound => libc::ENOENT,
+            Error::NotFile => libc::EINVAL,
+            Error::IsDir => libc::EISDIR,
+            Error::NotDir => libc::ENOTDIR,
+            Error::DirNotEmpty => libc::ENOTEMPTY,
+            Error::InvalidMove => libc::EINVAL,
+            Error::NotSymlink => libc::EINVAL,
+            Error::TooManySymlinks => libc::ELOOP,
+
+            Error::NodePtrOutOfBounds => libc::EIO,
+            Error::CorruptedDir => libc::EIO,
         }
     }
 }

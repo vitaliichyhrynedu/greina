@@ -373,5 +373,17 @@ type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     OutOfExtents,
+
+    // Filesystem corruption or logic error
     AlreadyMapped,
+}
+
+impl From<Error> for libc::c_int {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::OutOfExtents => libc::EFBIG,
+
+            Error::AlreadyMapped => libc::EIO,
+        }
+    }
 }
