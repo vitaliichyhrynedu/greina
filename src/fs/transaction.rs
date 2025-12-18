@@ -378,6 +378,8 @@ impl<'a, S: Storage> Transaction<'a, S> {
 
     /// Renames the entry named `old_name` to `new_name` and moves it from `old_parent_ptr` to
     /// `new_parent_ptr`.
+    /// If `new_name` exists and is of the same type as `old_name`, it is overwritten. The
+    /// overwrite doesn't succeed if `new_name` is a directory and is not empty.
     pub fn rename_entry(
         &mut self,
         old_parent_ptr: NodePtr,
@@ -385,39 +387,56 @@ impl<'a, S: Storage> Transaction<'a, S> {
         new_parent_ptr: NodePtr,
         new_name: &str,
     ) -> Result<()> {
-        let old_name = DirEntryName::try_from(old_name)?;
-        if old_name == DirEntryName::itself() || old_name == DirEntryName::parent() {
+        if old_name == "." || old_name == ".." || new_name == "." || new_name == ".." {
             return Err(Error::InvalidMove);
         }
-        let new_name = DirEntryName::try_from(new_name)?;
-        let mut old_parent = self.read_dir(old_parent_ptr)?;
 
-        let mut entry = old_parent
-            .remove_entry(old_name)
-            .ok_or(Error::EntryNotFound)?;
-        entry.name = new_name;
-
-        if old_parent_ptr == new_parent_ptr {
-            old_parent.add_entry(entry)?;
-            return self.write_dir(old_parent_ptr, &old_parent);
+        if old_parent_ptr == new_parent_ptr && old_name == new_name {
+            return Ok(());
         }
 
-        let mut new_parent = self.read_dir(new_parent_ptr)?;
+        // Remove `old_name` entry from `old_parent_ptr`
+        let mut old_parent = self.read_dir(old_parent_ptr)?;
+        let mut old_entry = old_parent
+            .remove_entry(DirEntryName::try_from(old_name)?)
+            .ok_or(Error::EntryNotFound)?;
+        self.write_dir(old_parent_ptr, &old_parent)?;
 
-        if entry.file_type == FileType::Dir {
-            if self.is_ancestor_dir(entry.node_ptr, new_parent_ptr)? {
+        if old_entry.file_type == FileType::Dir {
+            if self.is_ancestor_dir(old_entry.node_ptr, new_parent_ptr)? {
                 return Err(Error::InvalidMove);
             }
 
-            let mut dir = self.read_dir(entry.node_ptr)?;
+            // Change `old_entry` parent entry to `new_parent_ptr`
+            let mut dir = self.read_dir(old_entry.node_ptr)?;
             let parent_entry = dir.get_mut_parent();
             parent_entry.node_ptr = new_parent_ptr;
-            self.write_dir(entry.node_ptr, &dir)?;
+            self.write_dir(old_entry.node_ptr, &dir)?;
         }
 
-        new_parent.add_entry(entry)?;
+        // Remove `new_name` entry from `new_parent_ptr` to overwrite it
+        let new_entry = self.find_entry(new_parent_ptr, new_name);
+        match new_entry {
+            Ok(new_entry) => {
+                if old_entry.file_type != new_entry.file_type {
+                    return Err(Error::InvalidMove);
+                }
 
-        self.write_dir(old_parent_ptr, &old_parent)?;
+                match new_entry.file_type {
+                    FileType::Dir => self.remove_dir(new_parent_ptr, new_name)?,
+                    FileType::File | FileType::Symlink => {
+                        self.unlink_file(new_parent_ptr, new_name, true)?
+                    }
+                }
+            }
+            Err(Error::EntryNotFound) => (),
+            Err(e) => return Err(e),
+        }
+
+        // Add `old_entry` with `new_name` to `new_parent_ptr`
+        old_entry.name = DirEntryName::try_from(new_name)?;
+        let mut new_parent = self.read_dir(new_parent_ptr)?;
+        new_parent.add_entry(old_entry)?;
         self.write_dir(new_parent_ptr, &new_parent)?;
 
         Ok(())
