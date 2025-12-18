@@ -428,16 +428,21 @@ impl<S: Storage> Filesystem for Fuse<S> {
         match res {
             Ok(dir) => {
                 for (i, entry) in dir.as_slice().iter().enumerate().skip(offset as usize) {
+                    if entry.is_null() {
+                        continue;
+                    }
                     let name = match entry.name.as_str() {
                         Ok(name) => name,
                         Err(e) => return reply.error(e.into()),
                     };
-                    if reply.add(
+                    let is_full = reply.add(
                         entry.node_ptr.id(),
                         (i + 1) as i64,
                         entry.file_type.into(),
                         name,
-                    ) {
+                    );
+                    if is_full {
+                        reply.ok();
                         return;
                     };
                 }
