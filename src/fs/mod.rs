@@ -28,11 +28,11 @@ pub struct Filesystem<S: Storage> {
 }
 
 impl<S: Storage> Filesystem<S> {
-    /// Formats the persistent storage with a filesystem.
+    /// Creates a filesystem on a storage device.
     ///
     /// # Panics
     /// ...
-    pub fn format(mut storage: S, node_count: u64) -> transaction::Result<Self> {
+    pub fn create(mut storage: S, node_count: u64) -> transaction::Result<Self> {
         let block_count = storage.block_count().into_transaction_res()?;
 
         // Superblock
@@ -81,7 +81,7 @@ impl<S: Storage> Filesystem<S> {
         Ok(fs)
     }
 
-    /// Mounts the filesystem from the persistent storage.
+    /// Mounts the filesystem from a storage device.
     ///
     /// # Panics
     /// ...
