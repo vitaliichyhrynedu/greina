@@ -9,7 +9,6 @@ use crate::{
         alloc_map::{self, AllocMap},
         dir::{self, Dir, DirEntry, DirEntryName},
         node::{self, FileType, NODE_SIZE, Node, NodePtr, NodeTime},
-        path::{self, Path},
     },
     storage::{self, Storage},
 };
@@ -504,14 +503,14 @@ impl<'a, S: Storage> Transaction<'a, S> {
     }
 
     /// Returns the path contained inside `symlink_ptr`.
-    pub fn read_symlink(&mut self, symlink_ptr: NodePtr) -> Result<Path<'static>> {
+    pub fn read_symlink(&mut self, symlink_ptr: NodePtr) -> Result<Vec<u8>> {
         let node = self.read_node(symlink_ptr)?;
         if node.file_type != FileType::Symlink {
             return Err(Error::NotSymlink);
         }
         let mut buf = vec![0u8; node.size as usize];
         self.read_file_at(symlink_ptr, 0, &mut buf)?;
-        Ok(Path::try_from_bytes_owned(&buf)?)
+        Ok(buf)
     }
 
     /// Creates a symlink inside `parent_ptr`, containing `target`.
@@ -527,47 +526,6 @@ impl<'a, S: Storage> Transaction<'a, S> {
         let node_ptr = self.create_file(parent_ptr, name, FileType::Symlink, 0o777u16, uid, gid)?;
         self.write_file_at(node_ptr, 0, target.as_bytes())?;
         Ok(node_ptr)
-    }
-
-    /// Finds the node at `path`, using `start_node_ptr` as the start if `path` is relative.
-    pub fn path_node(&mut self, path: &Path, start_node_ptr: NodePtr) -> Result<NodePtr> {
-        self._path_node(path, start_node_ptr, 0)
-    }
-
-    /// Internal implementation of the `path_node` function.
-    /// `depth` describes how deep into the recursive call chain the function is.
-    fn _path_node(
-        &mut self,
-        path: &Path,
-        start_node_ptr: NodePtr,
-        depth: usize,
-    ) -> Result<NodePtr> {
-        const MAX_DEPTH: usize = 16;
-        if depth >= MAX_DEPTH {
-            return Err(Error::TooManySymlinks);
-        }
-
-        let mut curr_node_ptr = start_node_ptr;
-        for part in path.as_parts() {
-            match part.as_ref() {
-                "/" => {
-                    curr_node_ptr = NodePtr::root();
-                    continue;
-                }
-                "." => {
-                    continue;
-                }
-                _ => (),
-            }
-            let entry = self.find_entry(curr_node_ptr, part.as_ref())?;
-            curr_node_ptr = if entry.file_type == FileType::Symlink {
-                let target = self.read_symlink(entry.node_ptr)?;
-                self._path_node(&target, curr_node_ptr, depth + 1)?
-            } else {
-                entry.node_ptr
-            }
-        }
-        Ok(curr_node_ptr)
     }
 
     /// Returns the address of the block in which the node resides.
@@ -601,7 +559,6 @@ pub enum Error {
     Alloc(alloc_map::Error),
     Dir(dir::Error),
     Node(node::Error),
-    Path(path::Error),
 
     EntryNotFound,
     NotFile,
@@ -652,12 +609,6 @@ impl From<node::Error> for Error {
     }
 }
 
-impl From<path::Error> for Error {
-    fn from(err: path::Error) -> Self {
-        Self::Path(err)
-    }
-}
-
 impl From<Error> for libc::c_int {
     fn from(err: Error) -> Self {
         match err {
@@ -666,7 +617,6 @@ impl From<Error> for libc::c_int {
             Error::Alloc(e) => e.into(),
             Error::Dir(e) => e.into(),
             Error::Node(e) => e.into(),
-            Error::Path(e) => e.into(),
 
             Error::EntryNotFound => libc::ENOENT,
             Error::NotFile => libc::EINVAL,

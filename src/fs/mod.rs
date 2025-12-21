@@ -15,7 +15,6 @@ use crate::{
 pub mod alloc_map;
 pub mod dir;
 pub mod node;
-pub mod path;
 pub mod superblock;
 pub mod transaction;
 

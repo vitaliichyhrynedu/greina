@@ -247,7 +247,7 @@ impl<S: Storage> Filesystem for Fuse<S> {
         let symlink_ptr = NodePtr::new(ino);
         let res = self.fs.tx(|tx| tx.read_symlink(symlink_ptr));
         match res {
-            Ok(p) => reply.data(p.as_bytes()),
+            Ok(path) => reply.data(&path),
             Err(e) => reply.error(e.into()),
         }
     }
