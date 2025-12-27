@@ -2,7 +2,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use zerocopy::{FromBytes, Immutable, IntoBytes, TryFromBytes};
 
-use crate::block::{BLOCK_SIZE, BlockAddr};
+use crate::{
+    block::{BLOCK_SIZE, BlockAddr},
+    fs::extent::Extent,
+};
 
 /// A pointer to a node.
 #[repr(C)]
@@ -329,43 +332,6 @@ pub enum FileType {
     File,
     Dir,
     Symlink,
-}
-
-/// Represents a contiguous span of blocks.
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-#[derive(FromBytes, IntoBytes, Immutable)]
-pub struct Extent {
-    start: BlockAddr,
-    end: BlockAddr,
-}
-
-impl Extent {
-    /// Checks whether the extent does not point to any blocks.
-    fn is_null(&self) -> bool {
-        self.start == 0 && self.end == 0
-    }
-
-    /// Checks whether the extent represents a hole (sparse region).
-    fn is_hole(&self) -> bool {
-        self.start == 0 && self.end > 0
-    }
-
-    /// Zeroes out the extent.
-    fn nullify(&mut self) {
-        self.start = 0;
-        self.end = 0;
-    }
-
-    /// Returns the number of blocks this extent covers.
-    fn len(&self) -> u64 {
-        self.end - self.start
-    }
-
-    /// Represesnts itself as a (start, end) span.
-    fn span(&self) -> (u64, u64) {
-        (self.start, self.end)
-    }
 }
 
 type Result<T> = core::result::Result<T, Error>;
