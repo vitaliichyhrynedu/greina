@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+#[cfg(test)]
+mod tests;
+
 use std::{fmt::Debug, marker::PhantomData};
 
 use zerocopy::{
